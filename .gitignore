@@ -21,10 +21,9 @@ log.md
 development.md
 buglog.md
 
-# Obsidian
-.obsidian/workspace*
-.obsidian/cache
-.obsidian/.trash
+# Obsidian — app config, installed plugin binaries, workspace layout.
+# Machine/vault-local, not generic tooling. Whole folder excluded.
+.obsidian/
 
 # Local RAG / semantic search caches
 .rag-cache/

@@ -1,5 +1,5 @@
 ---
-description: Process every unchecked video URL in "YouTube Queue.md" (or a given file) - transcript + AI-first note per video, ad/sponsor filtering, then link concepts and fill gaps across the batch via /research. Checks off each line as it's done.
+description: Process every unchecked video URL in "YouTube Queue.md" (or a given file) - discards off-topic videos before full processing, transcript + AI-first note per relevant video, ad/sponsor filtering, then link concepts and fill gaps across the batch via /research. Checks off each line as it's done.
 category: research
 ---
 
@@ -22,15 +22,17 @@ find ~/.claude/plugins/cache/obsidian-second-brain -maxdepth 3 -type d -name com
 The skill's own `/youtube` hard-requires a Gemini/XAI key for summarization. We don't use it: fetch the free transcript and free metadata yourself, then write the note directly — this guarantees verbatim quotes.
 
 ```bash
+yt-dlp --skip-download --print title --print description --print channel --print upload_date --print duration_string --print view_count --print like_count "https://www.youtube.com/watch?v=<video-id>"
 uv run --directory "SKILL_ROOT" python -c "
 import sys
 sys.path.insert(0, '.')
 from scripts.research.lib.youtube import get_transcript
 print(get_transcript(sys.argv[1]) or '')
 " "<video-id>" > "<tmp-file>"
-yt-dlp --skip-download --print title --print channel --print upload_date --print duration_string --print view_count --print like_count "https://www.youtube.com/watch?v=<video-id>"
 ```
-Read the transcript file yourself, exclude sponsor reads/ad-reads/unrelated product pitches/course-consult pitches/membership asks from concept extraction (raw transcript stays untouched), then save `Research/YouTube/YYYY-MM-DD - <title-slug>.md` with `type: youtube` frontmatter (`cost-usd: 0`) and the same body structure as `/youtube-channel` step 5: `## For future Claude`, `## TL;DR`, `## Key Points`, `## Notable Quotes` (verbatim, copied character-for-character from the transcript - never paraphrased), `## Themes & Topics`, `## Worth Following Up On`. If a video fails (no captions, private, deleted), still check it off (so it's not retried forever) but append `(failed: <reason>)` after the URL on its line instead of a note link.
+**Relevance check** (same as `/youtube-channel` step 7.4): judge from title+description whether this is about health, fitness/athletic performance, or mental health at all; if ambiguous, skim the first ~2000 characters of the transcript. If not related in the slightest, discard it — check the line off with `(discarded: not health-related)` instead of a note link, do not write a note, and skip it from the concept-linking pass below.
+
+If relevant: read the transcript file yourself, exclude sponsor reads/ad-reads/unrelated product pitches/course-consult pitches/membership asks from concept extraction (raw transcript stays untouched), then save `Research/YouTube/YYYY-MM-DD - <title-slug>.md` with `type: youtube` frontmatter (`cost-usd: 0`) and the same body structure as `/youtube-channel` step 8: `## For future Claude`, `## TL;DR`, `## Key Points`, `## Notable Quotes` (verbatim, copied character-for-character from the transcript - never paraphrased), `## Themes & Topics`, `## Worth Following Up On`. If a video fails (no captions, private, deleted), still check it off (so it's not retried forever) but append `(failed: <reason>)` after the URL on its line instead of a note link.
 
 ## 5. Update the queue file
 For each processed line: change `- [ ]` to `- [x]`, append ` -> [[<note title>]]` on success or ` (failed: <reason>)` on failure. Append one line to the `## Run Log` section: `- YYYY-MM-DD HH:MM - N processed, M failed`.

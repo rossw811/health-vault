@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(.env)",
+      "Write(.env)",
+      "Edit(Sources/Paid/**)",
+      "Write(Sources/Paid/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command'); if echo \"$cmd\" | grep -qiE '(\\.env([^A-Za-z0-9._-]|$)|Sources/Paid)' && echo \"$cmd\" | grep -qiE '\\b(rm|del|erase|mv|move|Remove-Item|ri)\\b'; then jq -n '{hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\",permissionDecisionReason:\"Blocked: command touches a protected path (.env or Sources/Paid) combined with a destructive/move operation. Ask the user first.\"}}'; fi",
+            "statusMessage": "Checking for protected-path operations..."
+          }
+        ]
+      }
+    ]
+  }
+}

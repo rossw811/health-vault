@@ -22,10 +22,13 @@ Local-first Obsidian vault for athletic performance / health research. Sources g
 
 ## YouTube ingestion
 
-- Single video: use the skill's `/youtube [url]` (transcript + summary + quotes; add `--visual` only when asked, since it needs `yt-dlp` + `ffmpeg` frame extraction and is much slower).
-- Whole channel: use `/youtube-channel [channel url]` (custom command in `.claude/commands/`) — enumerates **every** video via `yt-dlp --flat-playlist` (no default cap; pass `--limit N` to bound a run), ingests each new one, filters ad/sponsor segments out of concept extraction, links concepts across the run and fills gaps via `/research`, and writes/updates a channel rollup note. Resumable — a per-channel state file in `Research/YouTube/.state/` means re-running only processes videos published since the last run.
+- Primary path: `/youtube-channel [channel url]` (whole channel) or `/youtube-queue` (curated list in `YouTube Queue.md` at vault root) — both custom commands in `.claude/commands/`. Neither depends on any API key: transcript fetching is free (`youtube-transcript-api`), metadata comes from `yt-dlp` (free), and **Claude writes the note directly** rather than delegating to a cloud summarization call.
+- **Notable Quotes must be verbatim** — copied character-for-character from the transcript text Claude actually reads, never paraphrased or reconstructed from memory. This holds regardless of whether a Gemini/XAI key is configured; it is a property of how our commands are written, not a fallback behavior.
+- The skill's own bundled `/youtube [url]` command is a separate, available fallback for one-off videos, but it hard-requires `GEMINI_API_KEY` or `XAI_API_KEY` (configured globally, see below) since it delegates summarization to Gemini/Grok — prefer `/youtube-queue` with a single line instead, it needs nothing.
+- `/youtube-channel`: enumerates **every** video via `yt-dlp --flat-playlist` (no default cap; pass `--limit N` to bound a run), filters ad/sponsor segments out of concept extraction, links concepts across the run and fills gaps via `/research`, and writes/updates a channel rollup note. Resumable — a per-channel state file in `Research/YouTube/.state/` means re-running only processes videos published since the last run.
 - "Watching" a channel means transcript+description-based understanding by default, not frame-by-frame visual analysis.
 - Run `/vault-update` to update the tool stack and refresh every tracked channel for new videos in one pass.
+- **Skill config is global, not per-vault:** `obsidian-second-brain`'s own commands (`/youtube`, `/research`, `/notebooklm`, etc.) read credentials from `~/.config/obsidian-second-brain/.env` (a different file from this vault's own `.env`), keyed by `OBSIDIAN_VAULT_PATH` — required for ANY of the skill's bundled commands to resolve this vault at all. If this machine ever hosts a second Obsidian vault, that global config would need to be swapped or the skill reinstalled scoped differently.
 
 ## Biometric correlation (Oura)
 

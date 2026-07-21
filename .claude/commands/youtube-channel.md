@@ -22,12 +22,33 @@ yt-dlp --flat-playlist --print "%(id)s" "<channel-url>/videos"
 find ~/.claude/plugins/cache/obsidian-second-brain -maxdepth 3 -type d -name commands | sed 's#/commands$##'
 ```
 
-## 5. Per-video ingestion with ad/sponsor filtering
+## 5. Per-video ingestion — Claude writes the note directly (no external LLM call, no key needed)
+The skill's own `/youtube` command delegates summarization to a cloud call (Gemini/Grok) that hard-requires an API key. We don't use that path: transcript fetching is free and key-less, and Claude (already in this session) writes the note directly — this also guarantees verbatim quotes are pulled from the real transcript, not a second model's paraphrase.
+
 For each new video ID, in order:
+
+1. Fetch the free transcript:
 ```bash
-uv run --directory "SKILL_ROOT" -m scripts.research.youtube_extract "<video-id>" [--visual]
+uv run --directory "SKILL_ROOT" python -c "
+import sys
+sys.path.insert(0, '.')
+from scripts.research.lib.youtube import get_transcript
+print(get_transcript(sys.argv[1]) or '')
+" "<video-id>" > "<tmp-file>"
 ```
-This saves the AI-first note under `Research/YouTube/YYYY-MM-DD - <title-slug>.md` per the skill's usual rules. **Then, before treating anything in the note as a "concept":** identify and exclude promotional material from concept extraction — sponsor reads/ad-reads, "use code X" segments, unrelated third-party product pitches, the creator's own paid-course/consult pitches, Patreon/membership asks. Leave the raw transcript untouched (it's the immutable source), but do not let these segments generate or update Concept notes, and do not count them toward "recurring concepts" in step 7. If a video is ENTIRELY promotional with no substantive content, note it as skipped-content-free in the rollup rather than forcing a concept extraction.
+2. Fetch free metadata via yt-dlp (no key needed):
+```bash
+yt-dlp --skip-download --print title --print channel --print upload_date --print duration_string --print view_count --print like_count "https://www.youtube.com/watch?v=<video-id>"
+```
+3. If the transcript is empty (no captions), log it as failed and move on — do not fabricate content.
+4. Read the transcript file yourself (Read tool) and write the note. Before treating anything as a "concept," identify and exclude promotional material — sponsor reads/ad-reads, "use code X" segments, unrelated third-party product pitches, the creator's own paid-course/consult pitches, Patreon/membership asks. Leave the raw transcript untouched conceptually (don't let promo segments generate or update Concept notes, don't count them toward "recurring concepts" in step 7). If a video is ENTIRELY promotional, note it as content-free in the rollup instead of forcing an extraction.
+5. Save `Research/YouTube/YYYY-MM-DD - <title-slug>.md` with `type: youtube` frontmatter (date, time, video-id, video-url, title, channel, published, view-count, like-count, duration, tags: [research, youtube], `ai-first: true`, `cost-usd: 0`) and body:
+   - `## For future Claude` preamble noting this is Claude-written directly from the free transcript (no external summarization model), quotes are verbatim.
+   - `## TL;DR` (2-3 sentences)
+   - `## Key Points` (5-12 specific bullets, promo material excluded)
+   - `## Notable Quotes` — **verbatim only, copied character-for-character from the transcript text you read, never paraphrased or reconstructed from memory.** Quote what's actually in the transcript.
+   - `## Themes & Topics`
+   - `## Worth Following Up On`
 
 If a video fails (no captions, private, deleted), log it and continue — one bad video never aborts the run. Append its ID to `processed_video_ids` regardless (so we don't retry a permanently-broken video every refresh) but mark it failed in the rollup.
 

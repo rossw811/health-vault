@@ -1,0 +1,12 @@
+# Core — required for the YouTube/PDF ingestion pipeline
+yt-dlp
+markitdown
+
+# Convenience — used for one-off spreadsheet/data inspection outside the
+# excel MCP server; not required for day-to-day command operation
+openpyxl
+pandas
+
+# Occasional use only — history maintenance (see README "History rewrites").
+# Not needed for normal operation; install on demand when actually rewriting git history.
+# git-filter-repo

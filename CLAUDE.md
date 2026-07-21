@@ -10,9 +10,10 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 
 - `Sources/` — raw ingested material (PDFs, transcripts, articles), entirely gitignored. `Sources/Paid/` additionally holds licensed course content (e.g. Ben Winney guides) — never redistribute even if repo scope ever changes. `Sources/Books/` holds legitimately-sourced book notes (see Book discovery below).
 - `People/` — one note per person in "the Web" (see below): `tier` (1/2/3, manual) or `derived_tier` (decimal hop notation, automatic)
+- `Bloodwork/` — one note per lab panel draw, gitignored. See Bloodwork section below.
 - `Dashboard/` — generated output of `scripts/generate_dashboard.py`, gitignored (regenerate, don't hand-edit)
 - `Concepts/` — atomic concept notes (one idea per note: lipolysis, HRV, CNS fatigue, hypertrophy, anxiety, burnout, etc.)
-- `Protocols/` — active/experimental protocol notes, each linking the Concepts and Sources backing it
+- `Protocols/` — active/experimental protocol notes, each linking the Concepts and Sources backing it. Give every real protocol a `status: active | paused | completed` frontmatter field (`start_date`/`end_date` when known) — `/oura-sync` reads this to auto-populate `active_protocols` on Daily notes, which is what makes `/oura-analyze`'s tag comparisons possible at all. A protocol note without `status` is invisible to that pipeline.
 - `Daily/` — daily logs with Oura frontmatter + protocol execution checklist
 - `Synthesis/` — STORM-style multi-perspective panel outputs, master protocol docs. `Synthesis/Channels/` holds YouTube channel rollup notes.
 - `Research/` — skill-default research output (`Research/YouTube/` single-video notes + `.state/` channel-refresh tracking, `Research/Web/` free/paid research dossiers)
@@ -68,6 +69,11 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 
 - Before processing any channel, `/youtube-channel` checks `Research/YouTube/.state/_excluded-channels.json` first and stops immediately if already listed — excluded channels are **never automatically re-fetched or re-evaluated**, only a manual edit to that file removes an exclusion.
 - New channels are triaged automatically: **inactive** (no upload in 18+ months) or **sparse** (fewer than 5 total videos) get added to the exclusion list and skipped, with the specific reason/detail recorded. A single relevant video from an excluded channel can still be processed individually via `/youtube-queue` — the exclusion is channel-level, not video-level.
+
+## Bloodwork
+
+- `/bloodwork-ingest [file | "manual"]` — structures a lab panel into `Bloodwork/YYYY-MM-DD - Panel.md`. **Reference ranges come only from the source** (the lab report or what the user states) — never inferred or filled in generically; a marker without a stated range gets `TBD`/`cannot-determine`, not a guessed "typical" range. Cross-references markers against family-history risk factors documented in `Protocols/My Profile.md` (thyroid/celiac given maternal Hashimoto's + celiac, lipids/ApoB/Lp(a)/NT-proBNP given Finnish CV risk, glucose/insulin/HbA1c given paternal prediabetes suspicion). Organizes and flags only — never diagnoses or recommends treatment.
+- `/bloodwork-trend [marker]` — once 2+ panels exist, tracks each marker's direction between draws and proximity to its reference-range boundary, with nearby `Daily/`/`active_protocols` context. Explicitly does not fit a statistical trend line from a handful of points — "direction between consecutive draws" is the honest claim at typical bloodwork frequency.
 
 ## Oura statistical analysis
 

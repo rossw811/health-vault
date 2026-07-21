@@ -1,5 +1,5 @@
 ---
-description: Pull EVERY Oura metric available (daily summary, sleep, readiness, activity, workouts, heart rate, stress, SpO2, sessions/meditation, trends) via the oura MCP server into Daily note frontmatter, then regenerate the local dashboard. --backfill pulls full history once; default daily run only fills today/gaps. Designed to run unattended on a schedule.
+description: Pull EVERY Oura metric available (daily summary, sleep, readiness, activity, workouts, heart rate, stress, SpO2, sessions/meditation, trends) via the oura MCP server into Daily note frontmatter, auto-populate active_protocols from Protocols/ status so /oura-analyze has tags to compare, then regenerate the local dashboard. --backfill pulls full history once; default daily run only fills today/gaps. Designed to run unattended on a schedule.
 category: vault
 ---
 
@@ -86,6 +86,13 @@ tags: [biometrics, health-tracking]
 ```
 
 Fields with no data for today: write `TBD`, don't omit the field and don't guess a value.
+
+## 2.5. Auto-populate active_protocols from Protocols/ status
+This is the actual mechanism that makes tag-based analysis (`/oura-analyze`) possible at all — until this runs, `active_protocols` stays permanently empty and there's nothing for that analysis to compare. Scan every `Protocols/*.md` for frontmatter `status: active` (optionally with `start_date`/`end_date`):
+
+- **For today's sync (no `--backfill`)**: set `active_protocols` to exactly the note titles of every Protocol currently `status: active` where today falls inside `start_date`/`end_date` if those are set (no bounds given = assume active). This REPLACES the field each run — it's meant to reflect "what's active right now," not accumulate. If you (or the user) manually added an ad-hoc entry that doesn't correspond to any Protocol note, keep it (union, don't silently drop manual entries) — only the auto-detected part gets refreshed.
+- **For `--backfill` dates**: only set `active_protocols` for a historical date if a Protocol note has explicit `start_date`/`end_date` bounds covering that date — without explicit dates, there's no honest way to know retroactively what was active, so leave it as `[]`/`TBD` for that day rather than guessing. Note in the summary how many backfilled days got a real protocol tag vs. how many couldn't be determined.
+- If zero `Protocols/*.md` notes currently have `status: active`, say so plainly in the summary rather than silently leaving the field empty with no explanation — this is expected until a real protocol gets tagged that way, not a bug.
 
 ## 3. Cross-reference against active protocols and recent trends
 If `active_protocols` is non-empty, use `oura_trends` plus today's numbers to note whether today's readiness/HRV/sleep looks consistent with or diverges from what's expected under those protocols — a one-line observation, not a full analysis (that's what `/storm-panel`/`/concept-audit` are for).

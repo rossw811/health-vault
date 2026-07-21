@@ -12,6 +12,25 @@ Pull the **entire history** the Oura account has data for, not just today:
 3. For every remaining date, pull the same full metric set as step 1 below and create/update that date's Daily note. If the MCP tools only accept a single date per call (no range parameter), loop day by day rather than assuming a range works — check the actual tool signature first.
 4. This can be a lot of calls for a long history — say up front how many dates need backfilling before starting, same "no silent caps" principle as everywhere else in this vault.
 
+### Checkpointing (required for any multi-day backfill, especially when split across parallel workers)
+A long backfill can die mid-run (rate limit, spend limit, crash) — don't let that lose all progress. Follow the same resumable-state convention as `Research/YouTube/.state/*.json`:
+- If the backfill is split into date-range chunks (e.g. across parallel subagents), each chunk gets its own state file at `Daily/.state/oura-backfill-<chunk-label>.json` — never share one state file across concurrent writers, that's a race condition.
+- After **every single date** finishes (successfully or with an error), immediately append/update that date's entry in the chunk's state file — don't batch updates until the end, since the whole point is surviving a mid-run death:
+  ```json
+  {
+    "range_start": "YYYY-MM-DD",
+    "range_end": "YYYY-MM-DD",
+    "processed_dates": [
+      {"date": "YYYY-MM-DD", "status": "ok"},
+      {"date": "YYYY-MM-DD", "status": "no_data", "note": "before ring was worn"},
+      {"date": "YYYY-MM-DD", "status": "error", "note": "which tool call failed and why"}
+    ],
+    "last_updated": "YYYY-MM-DD"
+  }
+  ```
+- On any resume, read the chunk's state file first — every date already listed (any status) is done; only process dates missing from `processed_dates`. This is cheaper and more precise than re-deriving progress from `Daily/*.md` existence/TBD-scanning, though that remains a valid fallback if a state file is ever lost.
+- `status: "error"` entries are still "processed" for resume purposes (don't retry them silently forever) but should be called out in the final summary so a human can decide whether to investigate or re-run just those dates.
+
 Without `--backfill`, only pull **today** (default) — that's what the daily scheduled run does. Backfill is either run manually once for history, or re-run later if a real gap opened up (e.g. the scheduled task didn't fire for a few days).
 
 ## 1. Pull EVERY available Oura metric, not just the headline ones

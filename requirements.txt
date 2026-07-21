@@ -7,6 +7,14 @@ markitdown
 openpyxl
 pandas
 
+# Required for scripts/oura_analyze.py (/oura-analyze) — correlations,
+# FDR-corrected group comparisons, cross-validated regression/random forest
+numpy
+scipy
+statsmodels
+scikit-learn
+pyyaml
+
 # Occasional use only — history maintenance (see README "History rewrites").
 # Not needed for normal operation; install on demand when actually rewriting git history.
 # git-filter-repo

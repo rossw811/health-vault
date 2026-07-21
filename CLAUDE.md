@@ -69,6 +69,13 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 - Before processing any channel, `/youtube-channel` checks `Research/YouTube/.state/_excluded-channels.json` first and stops immediately if already listed — excluded channels are **never automatically re-fetched or re-evaluated**, only a manual edit to that file removes an exclusion.
 - New channels are triaged automatically: **inactive** (no upload in 18+ months) or **sparse** (fewer than 5 total videos) get added to the exclusion list and skipped, with the specific reason/detail recorded. A single relevant video from an excluded channel can still be processed individually via `/youtube-queue` — the exclusion is channel-level, not video-level.
 
+## Oura statistical analysis
+
+- `/oura-analyze` (`scripts/oura_analyze.py` does the actual math; the command narrates it) — correlations across every Oura metric, FDR-corrected `active_protocols`-tag vs. biometric comparisons, and cross-validated predictive modeling (RidgeCV + shallow RandomForest — deliberately NOT deep learning, which would overfit a dataset this size). Writes to `Synthesis/Oura Analysis - YYYY-MM-DD.md`.
+- **Small-N discipline is load-bearing here, not decoration**: the script refuses to model below 20 rows, refuses a tag comparison below 5 days per group, and FDR-corrects every group-comparison p-value before calling anything "significant" — with dozens of tag x metric combinations tested, some look significant by chance alone without that correction. Claude reads the script's JSON output and reports it; it never recomputes or eyeballs a statistic itself.
+- A model result of near-zero or negative cross-validated R² is a valid, reportable finding ("no signal found"), not a failure to hide. Watch for circularity: predicting `readiness_score` from its own published sub-components (recovery index, sleep balance, etc.) will look artificially good and isn't a discovery — flag that explicitly rather than reporting it as one.
+- Not scheduled automatically — re-run manually as `Daily/` history grows, especially after an Oura backfill.
+
 ## Aggregation
 
 - `Bases/All Content.base` (Obsidian Bases) gives one browsable, filterable view across every content folder — Concepts, Protocols, Synthesis (incl. Channel Rollups, Critiques), Research/YouTube, Research/Web — grouped by area, with tags/status/date columns. This is the "see everything at a glance" answer rather than folder-by-folder browsing. Requires Obsidian itself with Bases (core feature in current versions) to view.

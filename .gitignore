@@ -5,8 +5,20 @@
 *.token
 *credentials*.json
 
-# Paid/licensed course content — never redistribute, even privately
-Sources/Paid/
+# Vault CONTENT — this repo tracks tooling only (commands, scripts, config).
+# All actual notes/research/personal data stay local-only, never pushed.
+Sources/
+Concepts/
+Protocols/
+Daily/
+Synthesis/
+Research/
+Logs/
+YouTube Queue.md
+index.md
+log.md
+development.md
+buglog.md
 
 # Obsidian
 .obsidian/workspace*

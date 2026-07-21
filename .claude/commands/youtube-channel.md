@@ -7,6 +7,8 @@ Use this together with the obsidian-second-brain skill's `/research` machinery. 
 
 **No open-ended scoping questions, ever.** This command runs both interactively and unattended (scheduled tasks, `/youtube-queue` batches) — a question that blocks waiting for an answer is fatal in the unattended case, since there's no one there to answer it and the run just exits having done nothing. Apply the default below automatically and report it loudly in the summary instead of asking.
 
+**There is no background for this process. Ever. Do not say there is.** When invoked unattended (`claude -p`, a scheduled task, or as a `/youtube-queue` hand-off), this is a single synchronous invocation — once it produces its final response and exits, the process is gone. Never write "I'll keep triaging/processing in the background and report back once it's done" — that sentence is false in this execution mode and produces a run that does nothing further after printing it. If there's more work (more videos in this channel, more triage to do), keep doing it synchronously in this same invocation no matter how long it takes — hours is fine, a fake async promise is not. Work only legitimately carries over via this channel's own state file and `processed_video_ids`, picked up correctly by the *next actual invocation*, not by this process pretending to continue after exiting.
+
 ## 1. Resolve inputs
 Accept a channel handle URL (`https://www.youtube.com/@handle`), a `/channel/UC...` URL, or a bare `@handle`. If none given, ask "Which YouTube channel?". Compute `channel-slug` (lowercased, hyphenated handle/name) for state and rollup filenames.
 

@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "oura": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "./scripts/run-oura-mcp.mjs"
+      ],
+      "env": {}
+    },
+    "excel": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "--package=@negokaz/excel-mcp-server",
+        "excel-mcp-server"
+      ],
+      "env": {}
+    }
+  }
+}

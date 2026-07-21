@@ -76,6 +76,10 @@ tags: [biometrics, health-tracking]
 - Before processing any channel, `/youtube-channel` checks `Research/YouTube/.state/_excluded-channels.json` first and stops immediately if already listed — excluded channels are **never automatically re-fetched or re-evaluated**, only a manual edit to that file removes an exclusion.
 - New channels are triaged automatically: **inactive** (no upload in 18+ months) or **sparse** (fewer than 5 total videos) get added to the exclusion list and skipped, with the specific reason/detail recorded. A single relevant video from an excluded channel can still be processed individually via `/youtube-queue` — the exclusion is channel-level, not video-level.
 
+## Aggregation
+
+- `Bases/All Content.base` (Obsidian Bases) gives one browsable, filterable view across every content folder — Concepts, Protocols, Synthesis (incl. Channel Rollups, Critiques), Research/YouTube, Research/Web — grouped by area, with tags/status/date columns. This is the "see everything at a glance" answer rather than folder-by-folder browsing. Requires Obsidian itself with Bases (core feature in current versions) to view.
+
 ## Automated maintenance
 
 - `/vault-update` runs weekly via a local Windows Scheduled Task (`HealthVault-VaultUpdate`, unattended, `scripts/run-vault-update.cmd`) — updates the local tool stack and refreshes every tracked YouTube channel for new videos. Logs to `Logs/vault-update-task.log` and `development.md`. Manage/inspect via Task Scheduler (`taskschd.msc`).

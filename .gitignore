@@ -1,0 +1,29 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.token
+*credentials*.json
+
+# Paid/licensed course content — never redistribute, even privately
+Sources/Paid/
+
+# Obsidian
+.obsidian/workspace*
+.obsidian/cache
+.obsidian/.trash
+
+# Local RAG / semantic search caches
+.rag-cache/
+.embeddings/
+*.sqlite
+*.sqlite3
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+*.swp

@@ -79,11 +79,16 @@ Immediately after each video finishes (success, failure, or discard as irrelevan
 This makes every video its own checkpoint: if the process is interrupted at any point, state and note-writes up to that point are already durable, and simply re-running the same command (or the `/youtube-queue` line it came from) picks up exactly where it left off via `processed_video_ids` — no re-fetching, no duplicate notes, no lost work beyond the one video in flight when it stopped.
 
 ## 9. Connect & deepen (only over videos processed THIS run)
+
+**Concept notes are the primary reading layer of this vault; per-video `Research/YouTube/` notes are raw material, not first-class content.** A video note's job is to preserve verbatim quotes and provenance for citation — not to sit alongside Concept notes as independent standalone articles. Every run should leave `Concepts/` genuinely more thorough, not just more cross-linked.
+
 1. **Aggregate concepts**: list every Concept this run's videos touched (excluding filtered promo material), with counts.
-2. **Link**: for concepts appearing in 2+ videos, or where a video explicitly related two concepts, add/update `[[wikilinks]]` between those Concept notes so the graph reflects it — don't just co-mention them in the rollup, edit the actual Concept notes.
-3. **Find gaps**: concepts mentioned but never explained, claims without a stated mechanism, or contradictions between videos in this run left unresolved.
-4. **Fill gaps**: for gaps central to the channel's throughline (not every passing mention), run `/research [gap topic]` (key-less by default) and use the result to extend the relevant Concept note — clearly mark that material as externally sourced, not from this channel, with its own citation.
-5. Any contradiction between a video's claim and an existing vault note gets the normal `[!contradiction]` callout — never silently overwrite.
+2. **Actively absorb, don't just link**: for each video that substantively addresses an existing Concept (not just a passing mention), rewrite that Concept note to actually incorporate the new material — new evidence, a new angle, a nuance the existing note lacked — the way `/obsidian-ingest` rewrites pages, not a bare `[[wikilink]]` bolted onto the bottom. If a video is genuinely the primary source for a Concept that doesn't exist yet, create it properly (structured, thorough, not a stub).
+3. **Mark absorption on the video note itself**: once a video's substantive content has been fully incorporated into a Concept note, prepend one line right under the video note's frontmatter: `> [!info] Fully absorbed into [[Concepts/<name>]] — see there for the synthesized version. This note remains for verbatim quotes and citation.` This is what keeps `Research/YouTube/` from reading as a pile of independent duplicate articles once its substance lives properly in `Concepts/`. Don't add this if the video only partially overlaps a Concept — only when its substance is genuinely covered.
+4. **Cross-link between Concepts**: where a video explicitly related two concepts, add/update `[[wikilinks]]` between those Concept notes too — the graph should reflect real connections, not just video-to-concept links.
+5. **Find gaps**: concepts mentioned but never explained, claims without a stated mechanism, or contradictions between videos in this run left unresolved.
+6. **Fill gaps**: for gaps central to the channel's throughline (not every passing mention), run `/research [gap topic]` (key-less by default) and use the result to extend the relevant Concept note — clearly mark that material as externally sourced, not from this channel, with its own citation.
+7. Any contradiction between a video's claim and an existing vault note gets the normal `[!contradiction]` callout — never silently overwrite.
 
 ## 10. Rollup note
 Write/update `Synthesis/Channels/<channel-name> - Channel Rollup.md`:

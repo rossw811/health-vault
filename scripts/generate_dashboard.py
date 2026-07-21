@@ -19,6 +19,10 @@ METRICS = [
     ("sleep_score", "Sleep Score"),
     ("average_hrv", "Average HRV"),
     ("resting_hr", "Resting HR"),
+    ("activity_score", "Activity Score"),
+    ("steps", "Steps"),
+    ("sleep_total_hours", "Sleep Total (hrs)"),
+    ("sleep_efficiency", "Sleep Efficiency"),
 ]
 
 
@@ -46,7 +50,7 @@ def load_daily_notes():
 
 
 def svg_line_chart(values, dates, label, width=760, height=160, pad=28):
-    points = [(d, v) for d, v in zip(dates, values) if v is not None]
+    points = [(d, v) for d, v in zip(dates, values) if isinstance(v, (int, float))]
     if not points:
         return f'<div class="chart-empty">No data yet for {label}</div>'
     vals = [v for _, v in points]

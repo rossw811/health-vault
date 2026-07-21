@@ -42,21 +42,7 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 ## Biometric correlation (Oura)
 
 - The `oura` MCP server (see `.mcp.json`) exposes sleep/readiness/activity/HRV tools. Token lives in `.env` (gitignored) as `OURA_TOKEN` — never hardcode it anywhere else.
-- `/oura-sync` (custom command) is the primary path: pulls live data into today's `Daily/YYYY-MM-DD.md` frontmatter and regenerates `Dashboard/index.html`. Runs daily via a local Windows Scheduled Task (`HealthVault-OuraSync`, unattended, `scripts/run-oura-sync.cmd`). `/obsidian-daily` remains available for manual/interactive daily-note creation, but `/oura-sync` is what keeps biometrics current automatically.
-
-```yaml
----
-date: <YYYY-MM-DD>
-type: daily-log
-readiness_score:
-sleep_score:
-average_hrv:
-resting_hr:
-active_protocols: []
-training_load_hrs: 0
-tags: [biometrics, health-tracking]
----
-```
+- `/oura-sync` (custom command) is the primary path: pulls **every** metric the `oura` MCP server exposes (daily summary, readiness + its components, sleep + its components, heart rate, activity/steps, workouts, stress, SpO2, sessions, trends — not just the headline four) into today's `Daily/YYYY-MM-DD.md` frontmatter, and regenerates `Dashboard/index.html`. Full field list lives in `.claude/commands/oura-sync.md` — don't duplicate it here, it'll drift; that file is the source of truth for the schema. Runs daily via a local Windows Scheduled Task (`HealthVault-OuraSync`, unattended, `scripts/run-oura-sync.cmd`). `/obsidian-daily` remains available for manual/interactive daily-note creation, but `/oura-sync` is what keeps biometrics current automatically.
 
 - When asked to evaluate protocol efficacy, cross-reference `Daily/` frontmatter against `active_protocols` over the requested window before concluding anything.
 - **Dashboard**: `scripts/generate_dashboard.py` reads `Daily/` frontmatter and writes a static, offline `Dashboard/index.html` (hand-rolled SVG charts, no server, no CDN) — open directly in a browser. Regenerated automatically by `/oura-sync`; run manually anytime with `python scripts/generate_dashboard.py`.

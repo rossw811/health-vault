@@ -1,9 +1,9 @@
 ---
-description: Ingest a YouTube channel into the vault (resumable, checkpointed per-video so an interrupted run loses nothing, permanently excludes inactive/sparse channels, discards off-topic videos before full processing, skips ads/sponsor segments), then link concepts across the run, fill gaps via /research, and update a standing "Channels to Follow" recommendation note. Defaults to the 15 most recent videos per run - pass --all for the full back-catalog, --limit N for a different cap. --visual for frame reading.
+description: Ingest a YouTube channel into the vault - every video the channel ever published gets at least a relevance check by default (resumable, checkpointed per-video so an interrupted run loses nothing, permanently excludes inactive/sparse channels, discards off-topic videos before full processing, skips ads/sponsor segments), then link concepts across the run, fill gaps via /research, and update a standing "Channels to Follow" recommendation note. Pass --limit N to bound a single run if you want a quick partial pass instead. --visual for frame reading.
 category: research
 ---
 
-Use this together with the obsidian-second-brain skill's `/research` machinery. Execute `/youtube-channel [channel url] [--limit N] [--all] [--visual]`:
+Use this together with the obsidian-second-brain skill's `/research` machinery. Execute `/youtube-channel [channel url] [--limit N] [--visual]`:
 
 **No open-ended scoping questions, ever.** This command runs both interactively and unattended (scheduled tasks, `/youtube-queue` batches) — a question that blocks waiting for an answer is fatal in the unattended case, since there's no one there to answer it and the run just exits having done nothing. Apply the default below automatically and report it loudly in the summary instead of asking.
 
@@ -31,9 +31,9 @@ Read `Research/YouTube/.state/<channel-slug>.json` if it exists: `{channel_url, 
 ```bash
 yt-dlp --flat-playlist --print "%(id)s" "<channel-url>/videos"
 ```
-(If the URL already points at a specific playlist/tab, use it as-is.) This is the full list. Diff against `processed_video_ids` from state — the videos actually eligible this run are only the new ones.
+(If the URL already points at a specific playlist/tab, use it as-is.) This is the full list — every video the channel has ever published, going back to its very first upload, not a recent window. Diff against `processed_video_ids` from state to find which are "new" (= not yet processed): **on a first-ever run for a channel, that's ALL of them** — for a prolific channel like Huberman Lab (hundreds of videos), that means hundreds of videos get queued for consideration in that first run. This is the intended behavior, not something to work around or sample down from.
 
-**Default scope: the 15 most recent new videos per run.** `--all` processes every new video regardless of count (only use this when explicitly passed — a large back-catalog channel run this way can take hours); `--limit N` sets a different cap. Report the actual cap applied, total videos found, how many are new, and — if the default cap left videos unprocessed — say explicitly "N more new videos exist, re-run with --all or a higher --limit to continue" so the truncation is loud, not silent. A capped run is always safe to re-run later: already-processed IDs are skipped via state, so repeated runs progressively work through a large back-catalog without reprocessing anything.
+**Default scope: literally every video, no cap, ever.** Every video a channel has ever published gets at least the relevance check in step 7.4 — that check is the actual filter (health/fitness/mental-health relevance), never a recency cutoff or a "most recent N" sample. Only apply `--limit N` if it was explicitly passed for this specific run; when it is, report the cap plainly and say explicitly "N more videos exist, re-run with a higher --limit or no --limit to continue" so any truncation is loud, never silent. A full back-catalog run on a prolific channel can take a long time (hours) — that's expected and correct given the ask, not a problem to solve by capping. Per-video checkpointing (step 8) means an interrupted run loses nothing and simply resumes exactly where it left off.
 
 ## 6. Resolve SKILL_ROOT
 ```bash
@@ -105,6 +105,6 @@ Write/update the single shared note `Synthesis/Channels to Follow.md` (not per-c
 Do not duplicate this into the per-channel rollup — the rollup is about this run's content, `Channels to Follow.md` is the standing recommendation list across all channels.
 
 ## 12. Summary to user
-Cap applied this run (default 15 / `--all` / `--limit N`), total videos on channel, new this run, how many were left over the cap (if any — with the explicit re-run instruction from step 5), failed, discarded as irrelevant, concepts linked, gaps filled, rollup note path, and this channel's recommendation tier. If this is a re-run, explicitly say "N new videos since last run on <date>". If excluded at step 3, this is the whole report (no rollup/follow-list update needed for an excluded channel).
+Cap applied this run (none by default, or `--limit N` if passed), total videos on channel, new this run, how many were left over an explicit cap (if any — with the re-run instruction from step 5), failed, discarded as irrelevant, concepts linked, gaps filled, rollup note path, and this channel's recommendation tier. If this is a re-run, explicitly say "N new videos since last run on <date>". If excluded at step 3, this is the whole report (no rollup/follow-list update needed for an excluded channel).
 
 **Anti-fabrication:** never invent a video's content if extraction failed, never invent a gap-fill fact — `/research` output only, cited. See `references/ai-first-rules.md` in SKILL_ROOT.

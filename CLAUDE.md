@@ -85,9 +85,9 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 - `/book-discovery [topic | author]` — Google Books previews, Project Gutenberg (public domain), NCBI Bookshelf + DOAB (open-access academic). Full-text distillation only for genuinely public-domain/open-access results; everything else gets citation + legitimate-access-pointer treatment.
 - **Internet Archive's lending library is deliberately excluded** — its legal status is contested (lost the Hachette appeal in 2024), not merely deprioritized. Never use it as a source even if convenient.
 
-## Personal tailoring phase
+## Personal tailoring phase — ACTIVE as of 2026-07-21
 
-- The vault starts in broad data-gathering mode. `/tailor-profile` (structured, one-question-at-a-time intake) writes `Protocols/My Profile.md` and marks the shift to tailored-research mode — once it exists, `/storm-panel`/`/concept-audit` should actively check whether a claim/protocol even applies to the documented profile, not just accumulate broadly.
+- `Protocols/My Profile.md` exists. **The vault is now in tailored-research mode, not broad data-gathering mode.** `/storm-panel` and `/concept-audit` must read it and actively check whether a claim/protocol applies to the documented profile (concussion history, current training status, stated goals, family history flags) before treating a general finding as automatically relevant. Re-run `/tailor-profile` to update sections as things change (training resumes, bloodwork comes back, etc.) rather than letting this note go stale.
 - **Concussion history is documented, not diagnosed by this vault.** `/concussion-protocol` researches and cites the actual published graduated return-to-play consensus statement (Berlin/Amsterdam, CDC HEADS UP — never invented from scratch), maps the user's documented history to a concrete current stage, and flags physician/neurologist confirmation specifically at stage-advancement points where symptoms could plausibly recur — not as blanket boilerplate. A documented history of multiple concussions is treated as materially different from the single-incident population the standard protocol validates against.
 
 ## Automated maintenance

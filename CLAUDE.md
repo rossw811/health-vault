@@ -19,6 +19,7 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 - `scripts/` — small local automation (Oura MCP wrapper, etc.) — keep these generic (env vars, relative paths), no hardcoded secrets or machine-specific paths
 - `development.md` — dev log + living "Current State" handoff summary. Update the log on any setup/tooling change; keep "Current State" current, don't let it drift.
 - `buglog.md` — append-only issue log for tooling problems encountered (not vault content issues — those are `[!contradiction]` callouts instead)
+- `ideas.md` — informal ideas backlog (checklist format). Read it when starting new work; check items off with a one-line note on what was built once acted on, never delete an entry.
 
 ## Ingestion rules
 

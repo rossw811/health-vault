@@ -1,9 +1,11 @@
 ---
-description: Ingest every video from a YouTube channel into the vault (resumable, permanently excludes inactive/sparse channels, discards off-topic videos before full processing, skips ads/sponsor segments), then link concepts across the run, fill gaps via /research, and update a standing "Channels to Follow" recommendation note. Add --limit N to cap a run, --visual for frame reading.
+description: Ingest a YouTube channel into the vault (resumable, permanently excludes inactive/sparse channels, discards off-topic videos before full processing, skips ads/sponsor segments), then link concepts across the run, fill gaps via /research, and update a standing "Channels to Follow" recommendation note. Defaults to the 15 most recent videos per run - pass --all for the full back-catalog, --limit N for a different cap. --visual for frame reading.
 category: research
 ---
 
-Use this together with the obsidian-second-brain skill's `/research` machinery. Execute `/youtube-channel [channel url] [--limit N] [--visual]`:
+Use this together with the obsidian-second-brain skill's `/research` machinery. Execute `/youtube-channel [channel url] [--limit N] [--all] [--visual]`:
+
+**No open-ended scoping questions, ever.** This command runs both interactively and unattended (scheduled tasks, `/youtube-queue` batches) — a question that blocks waiting for an answer is fatal in the unattended case, since there's no one there to answer it and the run just exits having done nothing. Apply the default below automatically and report it loudly in the summary instead of asking.
 
 ## 1. Resolve inputs
 Accept a channel handle URL (`https://www.youtube.com/@handle`), a `/channel/UC...` URL, or a bare `@handle`. If none given, ask "Which YouTube channel?". Compute `channel-slug` (lowercased, hyphenated handle/name) for state and rollup filenames.
@@ -17,7 +19,7 @@ Only for channels not already excluded. Check:
 yt-dlp --flat-playlist --print "%(upload_date)s" --playlist-end 1 "<channel-url>/videos"
 yt-dlp --flat-playlist --print "%(id)s" "<channel-url>/videos" | wc -l
 ```
-- **Inactive**: most recent upload is more than 18 months old (adjustable — ask the user if they want a different threshold, default 18 months).
+- **Inactive**: most recent upload is more than 18 months old (fixed default — don't ask, just apply it; report the threshold used in the summary).
 - **Sparse**: fewer than 5 total videos (not enough content to be worth channel-level treatment — a single relevant video can still go through `/youtube-queue` instead).
 
 If either triggers, write an entry to `Research/YouTube/.state/_excluded-channels.json` (`reason: "inactive"` or `"sparse"`, `detail` with the actual last-upload date or video count, `excluded_date: today`), report it to the user, and stop — do not enumerate or process any videos from this channel. This exclusion is permanent per step 2.
@@ -29,7 +31,9 @@ Read `Research/YouTube/.state/<channel-slug>.json` if it exists: `{channel_url, 
 ```bash
 yt-dlp --flat-playlist --print "%(id)s" "<channel-url>/videos"
 ```
-(If the URL already points at a specific playlist/tab, use it as-is.) This is the full list, oldest-to-newest as returned. **Default is every video** — do not silently cap. Only apply `--limit N` if the user passed it explicitly, and say so in your summary if you did. Diff against `processed_video_ids` from state — the videos actually processed this run are only the new ones. Tell the user up front: total videos found, how many are new, how many already done.
+(If the URL already points at a specific playlist/tab, use it as-is.) This is the full list. Diff against `processed_video_ids` from state — the videos actually eligible this run are only the new ones.
+
+**Default scope: the 15 most recent new videos per run.** `--all` processes every new video regardless of count (only use this when explicitly passed — a large back-catalog channel run this way can take hours); `--limit N` sets a different cap. Report the actual cap applied, total videos found, how many are new, and — if the default cap left videos unprocessed — say explicitly "N more new videos exist, re-run with --all or a higher --limit to continue" so the truncation is loud, not silent. A capped run is always safe to re-run later: already-processed IDs are skipped via state, so repeated runs progressively work through a large back-catalog without reprocessing anything.
 
 ## 6. Resolve SKILL_ROOT
 ```bash
@@ -97,6 +101,6 @@ Write/update the single shared note `Synthesis/Channels to Follow.md` (not per-c
 Do not duplicate this into the per-channel rollup — the rollup is about this run's content, `Channels to Follow.md` is the standing recommendation list across all channels.
 
 ## 12. Summary to user
-Total videos on channel, new this run, failed, discarded as irrelevant, concepts linked, gaps filled, rollup note path, and this channel's recommendation tier. If this is a re-run, explicitly say "N new videos since last run on <date>". If excluded at step 3, this is the whole report (no rollup/follow-list update needed for an excluded channel).
+Cap applied this run (default 15 / `--all` / `--limit N`), total videos on channel, new this run, how many were left over the cap (if any — with the explicit re-run instruction from step 5), failed, discarded as irrelevant, concepts linked, gaps filled, rollup note path, and this channel's recommendation tier. If this is a re-run, explicitly say "N new videos since last run on <date>". If excluded at step 3, this is the whole report (no rollup/follow-list update needed for an excluded channel).
 
 **Anti-fabrication:** never invent a video's content if extraction failed, never invent a gap-fill fact — `/research` output only, cited. See `references/ai-first-rules.md` in SKILL_ROOT.

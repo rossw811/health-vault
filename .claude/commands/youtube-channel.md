@@ -1,5 +1,5 @@
 ---
-description: Ingest a YouTube channel into the vault (resumable, permanently excludes inactive/sparse channels, discards off-topic videos before full processing, skips ads/sponsor segments), then link concepts across the run, fill gaps via /research, and update a standing "Channels to Follow" recommendation note. Defaults to the 15 most recent videos per run - pass --all for the full back-catalog, --limit N for a different cap. --visual for frame reading.
+description: Ingest a YouTube channel into the vault (resumable, checkpointed per-video so an interrupted run loses nothing, permanently excludes inactive/sparse channels, discards off-topic videos before full processing, skips ads/sponsor segments), then link concepts across the run, fill gaps via /research, and update a standing "Channels to Follow" recommendation note. Defaults to the 15 most recent videos per run - pass --all for the full back-catalog, --limit N for a different cap. --visual for frame reading.
 category: research
 ---
 
@@ -71,8 +71,12 @@ print(get_transcript(sys.argv[1]) or '')
 
 If a video fails (no captions, private, deleted), log it and continue — one bad video never aborts the run. Append its ID to `processed_video_ids` (status `failed`) regardless (so we don't retry a permanently-broken video every refresh) but mark it failed in the rollup.
 
-## 8. Update state
-Write `Research/YouTube/.state/<channel-slug>.json` with the merged `processed_video_ids` (each with its status: `ok` / `failed` / `skipped-irrelevant`), `channel_url`, `channel_name`, and `last_run: <today>`.
+## 8. Checkpoint after EVERY video, not once at the end
+Immediately after each video finishes (success, failure, or discard as irrelevant) — before moving to the next one:
+1. Re-write `Research/YouTube/.state/<channel-slug>.json` with that video's result merged in (`processed_video_ids`, `channel_url`, `channel_name`, `last_run: <today>`). Do not batch this until the channel finishes — a run killed mid-channel must not lose progress on videos already completed.
+2. Append one line to `Logs/youtube-ingest-progress.log` (create if absent): `YYYY-MM-DD HH:MM | <channel> | <video-id> | <ok|failed|skipped-irrelevant> | <short title>`. This is a clean, tail-friendly progress feed distinct from the command's full conversational output — the thing to watch for live status during a long unattended run.
+
+This makes every video its own checkpoint: if the process is interrupted at any point, state and note-writes up to that point are already durable, and simply re-running the same command (or the `/youtube-queue` line it came from) picks up exactly where it left off via `processed_video_ids` — no re-fetching, no duplicate notes, no lost work beyond the one video in flight when it stopped.
 
 ## 9. Connect & deepen (only over videos processed THIS run)
 1. **Aggregate concepts**: list every Concept this run's videos touched (excluding filtered promo material), with counts.

@@ -10,8 +10,8 @@ Default: `YouTube Queue.md` at the vault root. If it doesn't exist, create it fr
 
 ## 2. Parse unchecked lines
 Read the file. Every `- [ ] <text with a youtube.com/youtu.be URL in it>` line is a pending item. Extract the URL (strip any leading description text). Lines already `- [x]` are done - skip them. A queue line can be a single video OR a channel URL - detect which (channel handle/`/channel/` URLs vs. `/watch`, `youtu.be/`, `/shorts/`) and branch:
-- Single video -> process directly (step 3).
-- Channel URL -> hand off to the full `/youtube-channel [url]` flow for that one entry (it has its own resumable state), then treat the queue line as done once that command returns.
+- Single video -> process directly (step 3). Also check `Research/YouTube/.state/_excluded-channels.json` for whether the video's channel is on the permanent exclusion list (inactive/sparse) — if so, still process this individually-requested video (an explicit ask overrides the channel-level exclusion for this one video), but note the exclusion in the summary.
+- Channel URL -> hand off to the full `/youtube-channel [url]` flow for that one entry (it has its own resumable state and its own permanent exclusion check for inactive/sparse channels), then treat the queue line as done once that command returns. If the channel was excluded, check off the line with `(excluded: <reason>)` instead of a note link.
 
 ## 3. Resolve SKILL_ROOT
 ```bash

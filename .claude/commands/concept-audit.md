@@ -1,9 +1,9 @@
 ---
-description: Adversarially critique Concept/Protocol notes to find weak claims, single-source assumptions, missing mechanisms, and unresolved contradictions - a "bulletproofing" pass. Different from /obsidian-challenge (which red-teams a proposed idea against your own past decisions) - this systematically critiques the concepts themselves.
+description: Adversarially critique Concept/Protocol notes to find weak claims, single-source assumptions, missing mechanisms, and unresolved contradictions - a "bulletproofing" pass. Verifies critical claims via /research and gauges online sentiment via last30days. Different from /obsidian-challenge (which red-teams a proposed idea against your own past decisions) - this systematically critiques the concepts themselves.
 category: research
 ---
 
-Execute `/concept-audit [concept name | "all"]`:
+Execute `/concept-audit [concept name | "all"] [--skip-sentiment] [--skip-verify]`:
 
 ## 1. Resolve scope
 A specific note name -> just that one (plus anything it directly links to, for context). `all` or no argument -> every note in `Concepts/` and `Protocols/`. If scope is "all" and there are more than ~15 notes, say so up front and confirm before burning a full pass, or offer to batch it.
@@ -24,11 +24,28 @@ For each note, produce:
 
 Do not soften findings to be agreeable. If a note holds up well under all three lenses, say so plainly and briefly - don't manufacture weaknesses to pad the report.
 
-## 4. Write output
-- Full report: `Synthesis/Critiques/<concept-slug> - critique - YYYY-MM-DD.md` (`type: critique`, tags `[critique, thinking]`, `sources` listing every note read, per `references/ai-first-rules.md` in the obsidian-second-brain skill root).
-- On the actual Concept/Protocol note being critiqued: prepend a `> [!warning] Open critique (YYYY-MM-DD)` callout linking to the full report, listing only the CRITICAL-severity findings inline. Do not silently resolve or rewrite the note's claims here - this command surfaces weaknesses, it doesn't fix them. Fixing is a separate follow-up (e.g. `/research` on a specific gap, or a user decision).
+## 4. Verify critical claims against actual studies (skip with --skip-verify)
+For every CRITICAL-severity finding from step 2 (and any claim the evidence auditor flagged as single-source), don't stop at "this is unverified" - go look:
 
-## 5. Summary to user
-Notes audited, count of findings by severity, and which notes came through clean.
+```
+/research "<the specific claim>" --academic
+```
+This restricts to scholarly sources (arXiv, Semantic Scholar, OpenAlex, CrossRef) - we want actual studies, not blog summaries of studies. For each study that comes back relevant:
+- **What it actually found** - the real result, not the abstract's spin.
+- **Sample** - size, population (human/animal, age range, trained/untrained, etc.) - flag any mismatch with how the vault's claim generalizes it.
+- **Methodology shortcomings** - underpowered sample, no control group, self-reported outcomes, short duration, industry funding, non-replication if known.
+- **Verdict**: does this study support, contradict, or only partially/conditionally support the vault's claim? Be specific about the condition.
+
+Update the finding with a **Verified / Contradicted / Inconclusive** tag and cite the actual study (title, year, and what specifically it found) - not just "research suggests." If `/research --academic` turns up nothing relevant, say that plainly rather than treating silence as support.
+
+## 5. Online sentiment (skip with --skip-sentiment)
+For the concept as a whole (not per-claim), use the `last30days` skill to check what people are actually saying about it right now - Reddit, HN, X, YouTube, etc. Look specifically for: is this concept broadly accepted, actively debated, or has it been recently debunked/superseded somewhere the vault hasn't caught up to yet? Summarize as a short **Online Sentiment** section: dominant view, any notable dissent, recency of the discourse. This is directional color, not a source of truth - don't let it override the study-level verification in step 3.
+
+## 6. Write output
+- Full report: `Synthesis/Critiques/<concept-slug> - critique - YYYY-MM-DD.md` (`type: critique`, tags `[critique, thinking]`, `sources` listing every note read plus every study/source pulled in step 4, per `references/ai-first-rules.md` in the obsidian-second-brain skill root). Include the Online Sentiment section from step 5.
+- On the actual Concept/Protocol note being critiqued: prepend a `> [!warning] Open critique (YYYY-MM-DD)` callout linking to the full report, listing only the CRITICAL-severity findings inline with their Verified/Contradicted/Inconclusive tag. Do not silently resolve or rewrite the note's claims here - this command surfaces weaknesses, it doesn't fix them. Fixing is a separate follow-up (e.g. `/research` on a specific gap, or a user decision).
+
+## 7. Summary to user
+Notes audited, count of findings by severity, how many were verified/contradicted/inconclusive against actual studies, and which notes came through clean.
 
 **Anti-fabrication:** every flagged weakness must cite the exact claim and its location - never invent a weakness to seem thorough. If a lens finds nothing to flag, say so rather than reaching. See `references/ai-first-rules.md` in the obsidian-second-brain skill root.

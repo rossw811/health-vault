@@ -1,11 +1,15 @@
 # Health Vault
 
-Local-first Obsidian vault for athletic performance / health research. Sources get converted to structured notes, cross-linked, checked for contradictions, and correlated against Oura biometrics. No cloud RAG, no NotebookLM — everything runs locally via the `obsidian-second-brain` skill.
+Local-first Obsidian vault for athletic performance, physical health, **and mental health** research — mental health is a first-class domain here, not an afterthought bolted onto physical protocols. CNS fatigue, overtraining, and burnout sit at the intersection of both and should be treated that way, not siloed. Sources get converted to structured notes, cross-linked, checked for contradictions, and correlated against Oura biometrics. No cloud RAG, no NotebookLM — everything runs locally via the `obsidian-second-brain` skill.
+
+## Repo scope — tooling only, content never leaves this machine
+
+This git repo (private, github.com/rossw811/health-vault) tracks **only the generic tooling**: `.claude/commands/`, `.claude/settings.json`, `.mcp.json`, `scripts/`, `.gitignore`, `.env.example`, `CLAUDE.md`, `_CLAUDE.md`. Every actual content folder/file below is gitignored and stays local-only — never commit or suggest committing them, even accidentally via a broad `git add`. If a new top-level content file/folder is created, add it to `.gitignore` immediately, don't wait for the next cleanup pass.
 
 ## Layout
 
-- `Sources/` — raw ingested material (PDFs, transcripts, articles). `Sources/Paid/` holds licensed course content (e.g. Ben Winney guides) — **gitignored, never redistribute even privately.**
-- `Concepts/` — atomic concept notes (one idea per note: lipolysis, HRV, CNS fatigue, hypertrophy, etc.)
+- `Sources/` — raw ingested material (PDFs, transcripts, articles), entirely gitignored. `Sources/Paid/` additionally holds licensed course content (e.g. Ben Winney guides) — never redistribute even if repo scope ever changes.
+- `Concepts/` — atomic concept notes (one idea per note: lipolysis, HRV, CNS fatigue, hypertrophy, anxiety, burnout, etc.)
 - `Protocols/` — active/experimental protocol notes, each linking the Concepts and Sources backing it
 - `Daily/` — daily logs with Oura frontmatter + protocol execution checklist
 - `Synthesis/` — STORM-style multi-perspective panel outputs, master protocol docs. `Synthesis/Channels/` holds YouTube channel rollup notes.
@@ -18,7 +22,8 @@ Local-first Obsidian vault for athletic performance / health research. Sources g
 
 - Use `/obsidian-ingest` for new sources (PDF, article, transcript). It rewrites/extends existing Concept notes rather than duplicating them.
 - New information that conflicts with an existing note gets a `[!contradiction]` callout grouping the opposing claims and their sources — never silently overwrite a prior claim.
-- Auto-link key domain terms on first mention per note: `lipolysis`, `hypertrophy`, `HRV`, `CNS fatigue`, `readiness`, `resting heart rate`, `sleep efficiency`, `training load`. Create the Concept note if it doesn't exist yet.
+- Auto-link key domain terms on first mention per note: `lipolysis`, `hypertrophy`, `HRV`, `CNS fatigue`, `readiness`, `resting heart rate`, `sleep efficiency`, `training load`, and mental-health terms with equal weight — `burnout`, `overtraining syndrome`, `anxiety`, `sleep quality`, `stress load`, `motivation`, `mental fatigue`. Create the Concept note if it doesn't exist yet.
+- Mental health is not a separate, lesser category: when a source discusses training load, recovery, or performance, actively look for and surface the psychological dimension (motivation, burnout risk, anxiety around performance, identity/self-worth tied to results) rather than only extracting the physical claims. When running `/storm-panel` or `/concept-audit`, consider whether a mental-health-informed perspective is missing from the analysis.
 
 ## YouTube ingestion
 
@@ -61,7 +66,15 @@ tags: [biometrics, health-tracking]
 
 ## Bulletproofing concepts
 
-- Use `/concept-audit [concept | "all"]` (custom command) to adversarially critique existing Concept/Protocol notes — three independent lenses (mechanism-demanding, evidence-auditing, contrarian), finds weak/single-source claims, oversights, and unresolved contradictions. Writes a critique report to `Synthesis/Critiques/` and flags critical findings inline on the audited note via a `[!warning]` callout. This is distinct from the skill's own `/obsidian-challenge`, which red-teams a *proposed idea* against your own past decisions — `/concept-audit` systematically critiques the ingested concepts themselves.
+- Use `/concept-audit [concept | "all"]` (custom command) to adversarially critique existing Concept/Protocol notes — three independent lenses (mechanism-demanding, evidence-auditing, contrarian), finds weak/single-source claims, oversights, and unresolved contradictions. This is distinct from the skill's own `/obsidian-challenge`, which red-teams a *proposed idea* against your own past decisions — `/concept-audit` systematically critiques the ingested concepts themselves.
+- **Claim verification**: every critical finding gets checked against actual studies via `/research --academic` (scholarly sources only) — not just "is this backed," but the study's own sample size, methodology shortcomings, and whether its result actually generalizes to the vault's claim. Tagged Verified/Contradicted/Inconclusive.
+- **Online sentiment**: the `last30days` skill checks current Reddit/HN/X/YouTube discourse on the concept — directional color on whether it's broadly accepted, actively debated, or quietly debunked since ingestion. Never overrides the study-level verification.
+- Output: full report to `Synthesis/Critiques/`, critical findings flagged inline on the audited note via a `[!warning]` callout.
+
+## Source quality — permanent exclusion for inactive/sparse channels
+
+- Before processing any channel, `/youtube-channel` checks `Research/YouTube/.state/_excluded-channels.json` first and stops immediately if already listed — excluded channels are **never automatically re-fetched or re-evaluated**, only a manual edit to that file removes an exclusion.
+- New channels are triaged automatically: **inactive** (no upload in 18+ months) or **sparse** (fewer than 5 total videos) get added to the exclusion list and skipped, with the specific reason/detail recorded. A single relevant video from an excluded channel can still be processed individually via `/youtube-queue` — the exclusion is channel-level, not video-level.
 
 ## Automated maintenance
 

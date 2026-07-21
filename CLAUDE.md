@@ -8,7 +8,9 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 
 ## Layout
 
-- `Sources/` — raw ingested material (PDFs, transcripts, articles), entirely gitignored. `Sources/Paid/` additionally holds licensed course content (e.g. Ben Winney guides) — never redistribute even if repo scope ever changes.
+- `Sources/` — raw ingested material (PDFs, transcripts, articles), entirely gitignored. `Sources/Paid/` additionally holds licensed course content (e.g. Ben Winney guides) — never redistribute even if repo scope ever changes. `Sources/Books/` holds legitimately-sourced book notes (see Book discovery below).
+- `People/` — one note per person in "the Web" (see below): `tier` (1/2/3, manual) or `derived_tier` (decimal hop notation, automatic)
+- `Dashboard/` — generated output of `scripts/generate_dashboard.py`, gitignored (regenerate, don't hand-edit)
 - `Concepts/` — atomic concept notes (one idea per note: lipolysis, HRV, CNS fatigue, hypertrophy, anxiety, burnout, etc.)
 - `Protocols/` — active/experimental protocol notes, each linking the Concepts and Sources backing it
 - `Daily/` — daily logs with Oura frontmatter + protocol execution checklist
@@ -40,7 +42,7 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 ## Biometric correlation (Oura)
 
 - The `oura` MCP server (see `.mcp.json`) exposes sleep/readiness/activity/HRV tools. Token lives in `.env` (gitignored) as `OURA_TOKEN` — never hardcode it anywhere else.
-- `/obsidian-daily` should populate the daily note frontmatter from live Oura data:
+- `/oura-sync` (custom command) is the primary path: pulls live data into today's `Daily/YYYY-MM-DD.md` frontmatter and regenerates `Dashboard/index.html`. Runs daily via a local Windows Scheduled Task (`HealthVault-OuraSync`, unattended, `scripts/run-oura-sync.cmd`). `/obsidian-daily` remains available for manual/interactive daily-note creation, but `/oura-sync` is what keeps biometrics current automatically.
 
 ```yaml
 ---
@@ -57,6 +59,7 @@ tags: [biometrics, health-tracking]
 ```
 
 - When asked to evaluate protocol efficacy, cross-reference `Daily/` frontmatter against `active_protocols` over the requested window before concluding anything.
+- **Dashboard**: `scripts/generate_dashboard.py` reads `Daily/` frontmatter and writes a static, offline `Dashboard/index.html` (hand-rolled SVG charts, no server, no CDN) — open directly in a browser. Regenerated automatically by `/oura-sync`; run manually anytime with `python scripts/generate_dashboard.py`.
 
 ## Spreadsheets
 
@@ -81,6 +84,24 @@ tags: [biometrics, health-tracking]
 ## Aggregation
 
 - `Bases/All Content.base` (Obsidian Bases) gives one browsable, filterable view across every content folder — Concepts, Protocols, Synthesis (incl. Channel Rollups, Critiques), Research/YouTube, Research/Web — grouped by area, with tags/status/date columns. This is the "see everything at a glance" answer rather than folder-by-folder browsing. Requires Obsidian itself with Bases (core feature in current versions) to view.
+
+## The Web — tiered source-quality graph of people
+
+- `People/` holds one note per person, with `tier` (1/2/3, assigned manually — a judgment call this vault never makes unilaterally) or `derived_tier` (decimal hop notation, e.g. `"1.1"` for someone a Tier-1 source directly references, `"1.2"` for that person's own references, assigned automatically).
+- `/web-expand [person | channel url] [--depth N] [--influenced-by]` grows the Web: processes a source's content (reusing `/youtube-channel`'s full pipeline), additionally extracts every real named individual referenced/interviewed, dedupes against existing `People/` notes (keeping the best tier/hop path when a person is discovered via multiple routes), and recurses **2 hops deep by default** — a hard cap, not a suggestion, since this graph can otherwise grow combinatorially forever.
+- `--influenced-by` runs the same discovery in reverse: who influenced/taught/mentored an already-known person (via `/research` rather than their own channel) — this is how influence genealogy (e.g. what Poliquin himself studied) gets built, using the same tiering machinery.
+- **Grouping/visualization is a view concern, not a data concern**: every `People`/`Concepts` note already carries enough metadata (tier, `derived_tier`, `confidence` from `/concept-audit`, category tags) to regroup the graph any number of ways. Trying a new "webbing scheme" (by tier, by information quality, by topic category) means changing what property Extended Graph or a Base groups by — never reprocessing data. This vault is explicitly meant to experiment with multiple schemes over time, not settle on one.
+- Visualize via the **Extended Graph** community plugin (manual install via Settings → Community Plugins — never hot-edit plugin config while Obsidian is running) — node coloring/grouping by frontmatter property, multiple saved configs (one per webbing experiment).
+
+## Book discovery — legitimate sources only
+
+- `/book-discovery [topic | author]` — Google Books previews, Project Gutenberg (public domain), NCBI Bookshelf + DOAB (open-access academic). Full-text distillation only for genuinely public-domain/open-access results; everything else gets citation + legitimate-access-pointer treatment.
+- **Internet Archive's lending library is deliberately excluded** — its legal status is contested (lost the Hachette appeal in 2024), not merely deprioritized. Never use it as a source even if convenient.
+
+## Personal tailoring phase
+
+- The vault starts in broad data-gathering mode. `/tailor-profile` (structured, one-question-at-a-time intake) writes `Protocols/My Profile.md` and marks the shift to tailored-research mode — once it exists, `/storm-panel`/`/concept-audit` should actively check whether a claim/protocol even applies to the documented profile, not just accumulate broadly.
+- **Concussion history is documented, not diagnosed by this vault.** `/concussion-protocol` researches and cites the actual published graduated return-to-play consensus statement (Berlin/Amsterdam, CDC HEADS UP — never invented from scratch), maps the user's documented history to a concrete current stage, and flags physician/neurologist confirmation specifically at stage-advancement points where symptoms could plausibly recur — not as blanket boilerplate. A documented history of multiple concussions is treated as materially different from the single-incident population the standard protocol validates against.
 
 ## Automated maintenance
 

@@ -58,3 +58,11 @@ tags: [biometrics, health-tracking]
 ## Multi-perspective synthesis
 
 - Use `/storm-panel [question]` (custom command) for comparative analysis across sources — simulates a 4-expert panel (neurological/performance, systemic volume, clinical/longevity, biochemical optimization), queries the vault first, cross-examines disagreements, and writes a synthesized note to `Synthesis/`. This is a local prompt-driven simulation, not the academic Stanford STORM pipeline (which needs paid search APIs) — same output shape, no extra infra.
+
+## Bulletproofing concepts
+
+- Use `/concept-audit [concept | "all"]` (custom command) to adversarially critique existing Concept/Protocol notes — three independent lenses (mechanism-demanding, evidence-auditing, contrarian), finds weak/single-source claims, oversights, and unresolved contradictions. Writes a critique report to `Synthesis/Critiques/` and flags critical findings inline on the audited note via a `[!warning]` callout. This is distinct from the skill's own `/obsidian-challenge`, which red-teams a *proposed idea* against your own past decisions — `/concept-audit` systematically critiques the ingested concepts themselves.
+
+## Automated maintenance
+
+- `/vault-update` runs weekly via a local Windows Scheduled Task (`HealthVault-VaultUpdate`, unattended, `scripts/run-vault-update.cmd`) — updates the local tool stack and refreshes every tracked YouTube channel for new videos. Logs to `Logs/vault-update-task.log` and `development.md`. Manage/inspect via Task Scheduler (`taskschd.msc`).

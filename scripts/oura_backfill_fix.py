@@ -14,11 +14,12 @@ not per-day) and patches only fields that are currently TBD/empty in each
 Daily/*.md - everything else in each note (active_protocols, checklists,
 prose) is left untouched.
 """
+import contextlib
 import json
 import re
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -64,8 +65,7 @@ def dur_min(entry):
 
 def fmt_workouts(workouts):
     items = [
-        "{type: %s, duration_min: %s, intensity: %s}"
-        % (w.get("activity", "unknown"), dur_min(w), w.get("intensity", "TBD"))
+        f"{{type: {w.get('activity', 'unknown')}, duration_min: {dur_min(w)}, intensity: {w.get('intensity', 'TBD')}}}"
         for w in workouts
     ]
     return "[" + ", ".join(items) + "]"
@@ -73,7 +73,7 @@ def fmt_workouts(workouts):
 
 def fmt_sessions(sessions):
     items = [
-        "{type: %s, duration_min: %s}" % (s.get("type", "unknown"), dur_min(s))
+        f"{{type: {s.get('type', 'unknown')}, duration_min: {dur_min(s)}}}"
         for s in sessions
     ]
     return "[" + ", ".join(items) + "]"
@@ -213,10 +213,8 @@ def main():
             continue
         dm = re.search(r"^date:\s*(\S+)", m.group(1), re.MULTILINE)
         if dm:
-            try:
+            with contextlib.suppress(ValueError):
                 dates.append(date.fromisoformat(dm.group(1)))
-            except ValueError:
-                pass
     if not dates:
         print("No valid dated notes found.")
         return

@@ -16,7 +16,6 @@ narrative Synthesis note; this script only computes, never interprets.
 
 import json
 import re
-import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -35,10 +34,13 @@ PROTOCOLS_DIR = VAULT_ROOT / "Protocols"
 
 NUMERIC_FIELDS = [
     "readiness_score", "readiness_hrv_balance", "readiness_resting_hr",
-    "readiness_body_temp_deviation", "readiness_recovery_index",
-    "readiness_sleep_balance", "sleep_score", "sleep_total_hours",
+    "readiness_body_temp_deviation", "readiness_temp_trend_deviation",
+    "readiness_recovery_index", "readiness_sleep_balance",
+    "readiness_activity_balance", "readiness_previous_day_activity",
+    "readiness_previous_night", "sleep_score", "sleep_total_hours",
     "sleep_efficiency", "sleep_latency_min", "sleep_rem_hours",
-    "sleep_deep_hours", "sleep_light_hours", "average_hrv", "resting_hr",
+    "sleep_deep_hours", "sleep_light_hours", "sleep_time_in_bed_hours",
+    "sleep_avg_breath", "sleep_restless_periods", "average_hrv", "resting_hr",
     "activity_score", "steps", "calories_active", "activity_total_min",
     "inactivity_min", "spo2_avg", "training_load_hrs",
 ]
@@ -73,7 +75,20 @@ def load_daily_frame():
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    df.attrs["qc_warnings"] = validate_daily_frame(df)
     return df
+
+
+def validate_daily_frame(df):
+    """Flag biologically-impossible values (e.g. a mis-parsed frontmatter field)
+    without blocking analysis - same anti-silent-failure principle as everywhere
+    else in this vault. Returns a list of warning strings (empty if clean)."""
+    from schemas import oura_daily_schema, validate_or_report
+
+    if df.empty:
+        return []
+    ok, messages = validate_or_report(oura_daily_schema, df, "oura-daily")
+    return [] if ok else messages
 
 
 def correlation_matrix(df):
@@ -101,7 +116,7 @@ def tag_group_comparisons(df):
 
     raw_results = []
     for tag in all_tags:
-        has_tag = df["_protocols"].apply(lambda p: tag in p)
+        has_tag = df["_protocols"].apply(lambda p, tag=tag: tag in p)  # noqa: B023 - bound via default arg for clarity; .apply() already runs this immediately per-iteration
         for metric in NUMERIC_FIELDS:
             with_vals = df.loc[has_tag, metric].dropna()
             without_vals = df.loc[~has_tag, metric].dropna()
@@ -129,7 +144,7 @@ def tag_group_comparisons(df):
 
     pvals = [r["p_raw"] for r in raw_results]
     reject, pvals_fdr, _, _ = multipletests(pvals, alpha=0.05, method="fdr_bh")
-    for r, p_adj, sig in zip(raw_results, pvals_fdr, reject):
+    for r, p_adj, sig in zip(raw_results, pvals_fdr, reject, strict=True):
         r["p_fdr_corrected"] = round(float(p_adj), 4)
         r["significant_after_fdr_correction"] = bool(sig)
     raw_results.sort(key=lambda r: r["p_fdr_corrected"])
@@ -231,7 +246,7 @@ def lag_correlation(df):
         return {"note": "not enough overlapping data yet for any lag pair"}
     pvals = [r["p_raw"] for r in raw_results]
     reject, pvals_fdr, _, _ = multipletests(pvals, alpha=0.05, method="fdr_bh")
-    for r, p_adj, sig in zip(raw_results, pvals_fdr, reject):
+    for r, p_adj, sig in zip(raw_results, pvals_fdr, reject, strict=True):
         r["p_fdr_corrected"] = round(float(p_adj), 4)
         r["significant_after_fdr_correction"] = bool(sig)
     raw_results = [r for r in raw_results if abs(r["spearman_r"]) >= 0.25 or r["significant_after_fdr_correction"]]
@@ -299,7 +314,7 @@ def protocol_before_after(df):
         }
     pvals = [r["p_raw"] for r in raw_results]
     reject, pvals_fdr, _, _ = multipletests(pvals, alpha=0.05, method="fdr_bh")
-    for r, p_adj, sig in zip(raw_results, pvals_fdr, reject):
+    for r, p_adj, sig in zip(raw_results, pvals_fdr, reject, strict=True):
         r["p_fdr_corrected"] = round(float(p_adj), 4)
         r["significant_after_fdr_correction"] = bool(sig)
     raw_results.sort(key=lambda r: r["p_fdr_corrected"])
@@ -356,12 +371,12 @@ def predictive_modeling(df):
             "ridge_cv_r2_mean": round(float(ridge_scores.mean()), 3),
             "ridge_cv_r2_all_folds": [round(float(s), 3) for s in ridge_scores],
             "ridge_top_coefficients": sorted(
-                [{"feature": f, "coef": round(float(c), 4)} for f, c in zip(feature_cols, ridge.coef_)],
+                [{"feature": f, "coef": round(float(c), 4)} for f, c in zip(feature_cols, ridge.coef_, strict=True)],
                 key=lambda d: -abs(d["coef"]),
             )[:8],
             "random_forest_cv_r2_mean": round(float(rf_scores.mean()), 3),
             "random_forest_top_features": sorted(
-                [{"feature": f, "importance": round(float(i), 4)} for f, i in zip(feature_cols, rf.feature_importances_)],
+                [{"feature": f, "importance": round(float(i), 4)} for f, i in zip(feature_cols, rf.feature_importances_, strict=True)],
                 key=lambda d: -d["importance"],
             )[:8],
             "interpretation_note": (
@@ -386,6 +401,10 @@ def main():
         result["warning"] = "No Daily/ notes found at all - nothing to analyze yet."
         print(json.dumps(result, indent=2))
         return
+
+    qc_warnings = df.attrs.get("qc_warnings", [])
+    if qc_warnings:
+        result["qc_warnings"] = qc_warnings
 
     result["correlations"] = correlation_matrix(df)
     result["tag_comparisons"] = tag_group_comparisons(df)

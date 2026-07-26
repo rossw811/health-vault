@@ -1,0 +1,21 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+exclude = ["Sources", "Concepts", "Protocols", "Daily", "Synthesis", "Research", "People", "Bloodwork"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports/vars, undefined names - would have caught today's bugs)
+    "W",   # pycodestyle warnings
+    "I",   # import sorting
+    "UP",  # pyupgrade (modern Python idioms)
+    "B",   # bugbear (common real-bug patterns)
+    "SIM", # simplify
+]
+ignore = [
+    "E501",  # line length - not worth blocking on for this project's scripts
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/generate_dashboard.py" = ["E741"]

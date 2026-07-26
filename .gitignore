@@ -19,11 +19,17 @@ People/
 Dashboard/
 Bloodwork/
 YouTube Queue.md
+Podcast Queue.md
+wiki/
 index.md
 log.md
 development.md
 buglog.md
 ideas.md
+
+# Scratch / transient test data — not tooling, not real vault content either
+tmp_transcripts/
+__pycache__/
 
 # Obsidian — app config, installed plugin binaries, workspace layout.
 # Machine/vault-local, not generic tooling. Whole folder excluded.

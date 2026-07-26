@@ -1,61 +1,44 @@
 ---
-description: Pull EVERY Oura metric available (daily summary, sleep, readiness, activity, workouts, heart rate, stress, SpO2, sessions/meditation, trends) via the oura MCP server into Daily note frontmatter, auto-populate active_protocols from Protocols/ status so /oura-analyze has tags to compare, then regenerate the local dashboard. --backfill pulls full history once; default daily run only fills today/gaps. Designed to run unattended on a schedule.
+description: Pull literally every Oura data point available — every endpoint the API exposes (daily summary, sleep incl. raw periods/time-series, readiness, activity incl. full contributor breakdown, workouts, continuous heart rate, stress, SpO2, sessions/meditation, resilience, cardiovascular age, vO2max, sleep-time recommendations, logged tags, trends) via scripts/oura_full_sync.py (direct Oura API — the oura MCP server is structurally incomplete, see step 1) into Daily/.oura-raw/ raw JSON + Daily note frontmatter, auto-populate active_protocols from Protocols/ status so /oura-analyze has tags to compare, then regenerate the local dashboard. --backfill pulls full history once; default daily run only fills today/gaps. Designed to run unattended on a schedule.
 category: vault
 ---
 
 Execute `/oura-sync [--backfill]`:
 
 ## 0. Backfill mode (`--backfill`) — run once, or whenever there's a real gap
-Pull the **entire history** the Oura account has data for, not just today:
-1. Check `oura_trends` (or the equivalent range-capable tool) for the earliest date with real data — Oura typically has data from whenever the ring was first worn.
-2. For every date from that earliest date through yesterday, check whether `Daily/YYYY-MM-DD.md` already has real (non-`TBD`) biometric values. Skip dates that are already fully populated — this makes backfill safe to re-run without redundant API calls.
-3. For every remaining date, pull the same full metric set as step 1 below and create/update that date's Daily note. If the MCP tools only accept a single date per call (no range parameter), loop day by day rather than assuming a range works — check the actual tool signature first.
-4. This can be a lot of calls for a long history — say up front how many dates need backfilling before starting, same "no silent caps" principle as everywhere else in this vault.
 
-### Checkpointing (required for any multi-day backfill, especially when split across parallel workers)
-A long backfill can die mid-run (rate limit, spend limit, crash) — don't let that lose all progress. Follow the same resumable-state convention as `Research/YouTube/.state/*.json`:
-- If the backfill is split into date-range chunks (e.g. across parallel subagents), each chunk gets its own state file at `Daily/.state/oura-backfill-<chunk-label>.json` — never share one state file across concurrent writers, that's a race condition.
-- After **every single date** finishes (successfully or with an error), immediately append/update that date's entry in the chunk's state file — don't batch updates until the end, since the whole point is surviving a mid-run death:
-  ```json
-  {
-    "range_start": "YYYY-MM-DD",
-    "range_end": "YYYY-MM-DD",
-    "processed_dates": [
-      {"date": "YYYY-MM-DD", "status": "ok"},
-      {"date": "YYYY-MM-DD", "status": "no_data", "note": "before ring was worn"},
-      {"date": "YYYY-MM-DD", "status": "error", "note": "which tool call failed and why"}
-    ],
-    "last_updated": "YYYY-MM-DD"
-  }
-  ```
-- On any resume, read the chunk's state file first — every date already listed (any status) is done; only process dates missing from `processed_dates`. This is cheaper and more precise than re-deriving progress from `Daily/*.md` existence/TBD-scanning, though that remains a valid fallback if a state file is ever lost.
-- `status: "error"` entries are still "processed" for resume purposes (don't retry them silently forever) but should be called out in the final summary so a human can decide whether to investigate or re-run just those dates.
+**Now a single script invocation, not a per-date Claude-driven loop:**
+```bash
+python scripts/oura_full_sync.py --backfill
+```
+This pulls the entire history from the ring's `set_up_at` date (from `ring_configuration`, fetched automatically) through yesterday, in one process — it paginates every endpoint internally via `next_token`, indexes every record by its own `day` field, and upserts every `Daily/*.md` note plus its `Daily/.oura-raw/<date>.json` in a single pass. It's naturally idempotent and safe to re-run: a field is only rewritten if the new value actually differs from what's already there, so a repeat run does no harmful work. The per-date checkpoint-file machinery this section used to describe (for a multi-agent, tool-call-per-date backfill) is no longer needed for that reason — the script itself doesn't die mid-range the way a long chain of individual MCP tool calls could, and if it does crash, just re-run the same command; already-correct fields are left alone.
 
-Without `--backfill`, only pull **today** (default) — that's what the daily scheduled run does. Backfill is either run manually once for history, or re-run later if a real gap opened up (e.g. the scheduled task didn't fire for a few days).
+If a full historical backfill ever needs to run split across parallel workers for genuinely large date ranges, fall back to invoking the script once per date-range chunk (`--start`/`--end`) — each chunk writes to disjoint `Daily/*.md`/`Daily/.oura-raw/*.json` files, so no shared state file or locking is needed the way the old Research/YouTube-style checkpoint convention required.
 
-## 1. Pull EVERY available Oura metric, not just the headline ones
-Use every tool the `oura` MCP server exposes (see `.mcp.json`) for the target date(s) — this is a deliberate "pull all of it" pass, not a curated subset:
-- `oura_daily_summary` — the day's rollup
-- `oura_readiness` — readiness score + its component contributors (HRV balance, resting HR, body temperature deviation, recovery index, sleep balance)
-- `oura_sleep` — sleep score + components (total sleep, efficiency, latency, REM/deep/light breakdown, restfulness, timing)
-- `oura_heart_rate` — resting HR, average HRV, overnight HR trend
-- `oura_activity` — activity score, steps, calories, total activity time, inactivity time
-- `oura_workouts` — any logged workout sessions today (type, duration, intensity)
-- `oura_stress` — daily stress/recovery balance if available on the account's Oura tier
-- `oura_spo2` — blood oxygen if available
-- `oura_sessions` — meditation/breathing/rest sessions if logged
-- `oura_trends` — recent multi-day trend context (useful for the "consistent with protocol" check in step 3)
+Without `--backfill`, only pull **today** (default) — that's what the daily scheduled run does (`python scripts/oura_full_sync.py --date <today>`, or bare `--date`-less invocation which defaults to today). Backfill is either run manually once for history, or re-run later if a real gap opened up (e.g. the scheduled task didn't fire for a few days).
 
-If a given tool/metric isn't available for this account/day (e.g. no SpO2 sensor data, no workout logged), record it as genuinely absent — don't skip silently, note which categories had no data. If the MCP server errors outright (token missing/invalid, API down), report the specific error and stop — do not fabricate placeholder values for anything.
+## 1. Pull literally everything Oura has — no curated subset, no gaps
 
-### Known bug: `oura_sleep` (periods), `oura_activity`, `oura_workouts`, `oura_sessions` return empty for single-day queries
-`@daveremy/oura-mcp` (see `scripts/run-oura-mcp.mjs`) always queries Oura's v2 API with `start_date == end_date == <day>`. Oura's `daily_sleep`, `daily_readiness`, `daily_stress`, and `daily_spo2` endpoints tolerate that fine (contributor *scores* come through correctly), but the `sleep` (raw periods — total/REM/deep/light hours, latency, efficiency, average_hrv, lowest_heart_rate), `daily_activity` (score, steps, calories, activity/inactivity minutes), `workout`, and `session` endpoints silently return an **empty result** unless `end_date` is strictly after `start_date` — confirmed directly against the raw API, including on dates known to have real records. This is not a missing-data situation; it looks like missing data (`TBD`/`[]`) but the data exists and is one day-boundary away from being returned correctly.
-- For `--backfill` or any multi-day pull, don't rely on the MCP tool for these four fields' data. Query the real Oura API directly (`https://api.ouraring.com/v2/usercollection/<endpoint>`, `Authorization: Bearer $OURA_TOKEN` from `.env`) with `end_date` one day past the range you actually want, filter each returned record by its own `day` field, and map: `sleep.average_hrv` → `average_hrv`; `sleep.total_sleep_duration/3600` → `sleep_total_hours`; `sleep.efficiency` → `sleep_efficiency`; `sleep.latency/60` → `sleep_latency_min`; `sleep.rem_sleep_duration/3600` → `sleep_rem_hours`; `sleep.deep_sleep_duration/3600` → `sleep_deep_hours`; `sleep.light_sleep_duration/3600` → `sleep_light_hours`; `sleep.lowest_heart_rate` → `resting_hr` (this is the authoritative source for `resting_hr` — prefer it over deriving from the raw `oura_heart_rate` continuous stream); `daily_activity.score` → `activity_score`; `.steps` → `steps`; `.active_calories` → `calories_active`; `(low_activity_time+medium_activity_time+high_activity_time)/60` → `activity_total_min`; `sedentary_time/60` → `inactivity_min`; `workout`/`session` records (grouped by `day`) → the `workouts`/`sessions` lists.
-- `scripts/oura_backfill_fix.py` is the reference implementation (one range call per endpoint, not per-day) — reuse or adapt it rather than re-deriving this from scratch each time. For a **single day's sync** (the daily scheduled run), the same fix applies: query with `end_date = today + 1 day`, not `end_date = today`.
-- This is a bug in the third-party `@daveremy/oura-mcp` package, not something fixable by editing vault files — re-check whether a newer package version has fixed it before assuming this workaround is needed forever.
+**The `oura` MCP server is not the sync mechanism — `scripts/oura_full_sync.py` is.** Confirmed live 2026-07-26: `@daveremy/oura-mcp` (a) always queries `start_date == end_date == <day>`, which Oura silently returns empty/null for on the `sleep` (periods), `daily_activity`, `workout`, and `session` endpoints (live-verified: `oura_activity` returned `null` and `oura_sleep`'s `periods` returned `[]` on every date tested, including dates with real data confirmed via the direct API), and (b) has no tool at all for `daily_resilience`, `daily_cardiovascular_age`, `vO2_max`, `rest_mode_period`, `ring_configuration`, `tag`, `enhanced_tag`, `sleep_time`, or `personal_info` — roughly 40% of Oura's real v2 endpoints are simply absent from the wrapper. Both are structural limits of the third-party package, not something a cleverer MCP call works around.
+
+Run:
+```bash
+python scripts/oura_full_sync.py --date YYYY-MM-DD        # single day (default daily run)
+python scripts/oura_full_sync.py --start A --end B         # explicit range
+python scripts/oura_full_sync.py --backfill                # full history, ring set-up date through yesterday
+```
+This talks to `https://api.ouraring.com/v2/usercollection/*` directly (same pattern `scripts/oura_backfill_fix.py` first validated), with correct `end_date = range_end + 1` semantics on every endpoint. It writes two things per day, every run:
+1. **`Daily/.oura-raw/<date>.json`** — the complete, unmodified raw payload for every endpoint that has data that day, including the large time-series arrays (heart-rate/HRV/MET streams, movement and sleep-phase strings) that don't belong in frontmatter. This is the actual "no gaps" guarantee — treat it as the source of truth if a curated frontmatter field is ever in question.
+2. **`Daily/<date>.md` frontmatter** — every scalar summary field with real data for that day (see the schema in step 2 — it now includes readiness's `sleep_regularity` contributor, full resilience/cardiovascular-age/sleep-time/vO2max data, and the complete activity contributor + totals breakdown, none of which the MCP wrapper could ever surface).
+
+The `oura` MCP tools remain useful for **ad-hoc interactive questions** during a session ("what's my readiness today") since they're faster than shelling out to Python — just don't rely on them for the sync itself, and don't trust `oura_activity`/`oura_sleep`'s `periods`/`oura_workouts`/`oura_sessions` for anything beyond a quick same-day sanity check, since those four are the ones confirmed broken.
+
+If the script reports an endpoint fetch failure (see its stderr warnings), that's a real Oura API error (token invalid, endpoint down) — report it, don't fabricate placeholder values. Fields with genuinely no data for a day stay `TBD`/`[]`, same anti-fabrication rule as always.
 
 ## 2. Update the Daily note (today, or each backfilled date)
 Resolve `Daily/YYYY-MM-DD.md` for the target date (create from scratch with the schema below if it doesn't exist yet; if it exists, update only the biometric fields, never overwrite the protocol checklist or any content already there):
+
+`scripts/oura_full_sync.py` creates/updates notes against this schema (see `FULL_FRONTMATTER_TEMPLATE` in that script for the authoritative version — don't let this doc drift from it):
 
 ```yaml
 ---
@@ -65,15 +48,39 @@ readiness_score:
 readiness_hrv_balance:
 readiness_resting_hr:
 readiness_body_temp_deviation:
+readiness_temp_trend_deviation:
 readiness_recovery_index:
 readiness_sleep_balance:
+readiness_activity_balance:
+readiness_previous_day_activity:
+readiness_previous_night:
+readiness_sleep_regularity:      # 9th readiness contributor — missing from every prior version of this schema until 2026-07-26
 sleep_score:
+sleep_contrib_deep:              # the 7 daily_sleep sub-score contributors — previously only the top-line score was captured
+sleep_contrib_efficiency:
+sleep_contrib_latency:
+sleep_contrib_rem:
+sleep_contrib_restfulness:
+sleep_contrib_timing:
+sleep_contrib_total:
 sleep_total_hours:
 sleep_efficiency:
 sleep_latency_min:
 sleep_rem_hours:
 sleep_deep_hours:
 sleep_light_hours:
+sleep_time_in_bed_hours:
+sleep_bedtime_start:
+sleep_bedtime_end:
+sleep_avg_breath:
+sleep_restless_periods:
+sleep_type:                      # long_sleep | nap
+sleep_algorithm_version:
+sleep_awake_time_min:
+sleep_extra_periods_logged: 0    # count of same-day naps beyond the primary long_sleep period (full detail in Daily/.oura-raw/)
+sleep_time_recommendation:       # from the sleep_time endpoint (bedtime-optimization guidance)
+sleep_time_optimal_bedtime:
+sleep_time_status:
 average_hrv:
 resting_hr:
 activity_score:
@@ -81,17 +88,42 @@ steps:
 calories_active:
 activity_total_min:
 inactivity_min:
-workouts: []          # list of {type, duration_min, intensity} if any logged
+activity_contrib_meet_daily_targets:   # the 6 daily_activity sub-score contributors — not previously captured at all
+activity_contrib_move_every_hour:
+activity_contrib_recovery_time:
+activity_contrib_stay_active:
+activity_contrib_training_frequency:
+activity_contrib_training_volume:
+activity_equivalent_walking_distance_m:
+activity_non_wear_min:
+activity_resting_min:
+activity_high_met_min:
+activity_medium_met_min:
+activity_low_met_min:
+activity_target_calories:
+activity_total_calories:
+activity_target_meters:
+activity_meters_to_target:
+activity_inactivity_alerts:
+resilience_level:                # daily_resilience — an endpoint the MCP wrapper never exposed at all
+resilience_sleep_recovery:
+resilience_daytime_recovery:
+resilience_stress:
+cardio_vascular_age:             # daily_cardiovascular_age — same, never exposed via MCP
+cardio_pulse_wave_velocity:
+vo2_max:                         # vO2_max endpoint; TBD until Oura has computed one
+workouts: []           # list of {type, distance_m, calories, intensity, label, source} per logged workout
 stress_summary:        # if available on this account's tier
 spo2_avg:              # if available
-sessions: []           # meditation/breathing/rest sessions logged today
+sessions: []           # list of {type, avg_heart_rate, avg_hrv, mood, motion_count} per meditation/breathing/rest session
+oura_tags_logged: []   # user-logged Oura app tags (e.g. "airplane") for this day — distinct from the vault's own `tags:` field below
 active_protocols: []   # only set on creation; never overwritten on update
 training_load_hrs: 0   # only set on creation; never overwritten on update
 tags: [biometrics, health-tracking]
 ---
 ```
 
-Fields with no data for today: write `TBD`, don't omit the field and don't guess a value.
+Fields with no data for today: write `TBD`, don't omit the field and don't guess a value. Time-series data (continuous heart rate, per-sleep HRV/heart-rate/movement arrays, the activity MET stream, sleep-phase strings) is deliberately **not** in this frontmatter — it lives in full in `Daily/.oura-raw/<date>.json`, since a single day's heart-rate stream alone can run to several thousand data points.
 
 ## 2.5. Auto-populate active_protocols from Protocols/ status
 This is the actual mechanism that makes tag-based analysis (`/oura-analyze`) possible at all — until this runs, `active_protocols` stays permanently empty and there's nothing for that analysis to compare. Scan every `Protocols/*.md` for frontmatter `status: active` (optionally with `start_date`/`end_date`):

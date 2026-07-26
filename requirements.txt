@@ -15,6 +15,17 @@ statsmodels
 scikit-learn
 pyyaml
 
+# Optional — local fallback transcription (scripts/whisper_transcribe.py) for when
+# YouTube's caption-serving endpoint is IP-blocked but video/audio download still works.
+# Also needs ffmpeg on PATH. Not required for normal operation.
+# faster-whisper
+
+# Dev tooling — lint/format (ruff), schema validation (pandera), fast dataframes
+# for larger corpora (polars, e.g. the raw-transcript metadata as it scales up).
+ruff
+pandera
+polars
+
 # Occasional use only — history maintenance (see README "History rewrites").
 # Not needed for normal operation; install on demand when actually rewriting git history.
 # git-filter-repo

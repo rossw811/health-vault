@@ -27,13 +27,10 @@ The skill's own `/youtube` hard-requires a Gemini/XAI key for summarization. We 
 
 ```bash
 yt-dlp --skip-download --print title --print description --print channel --print upload_date --print duration_string --print view_count --print like_count "https://www.youtube.com/watch?v=<video-id>"
-uv run --directory "SKILL_ROOT" python -c "
-import sys
-sys.path.insert(0, '.')
-from scripts.research.lib.youtube import get_transcript
-print(get_transcript(sys.argv[1]) or '')
-" "<video-id>" > "<tmp-file>"
+python scripts/fetch_transcript_auto.py "<video-id>" > "<tmp-file>" 2> "<diag-file>"
 ```
+This single script already tries official captions first and automatically falls back to local Whisper transcription (audio download + `faster-whisper`, unaffected by the caption-endpoint block) if that fails with `IpBlocked`/`RequestBlocked`/`429` — fully automatic, no judgment call needed. Check `<diag-file>` (stderr) for `method: official captions` vs `method: local whisper` and set `transcript_source: whisper-local` in frontmatter only for the latter. Never use a third-party "free transcript" site instead — at least one has already been taken down over this exact use case. Needs `ffmpeg` on PATH and `faster-whisper` installed for the fallback — if both methods fail (exit code 1), the diagnostic file explains why.
+
 **Relevance check** (same as `/youtube-channel` step 7.4): judge from title+description whether this is about health, fitness/athletic performance, or mental health at all; if ambiguous, skim the first ~2000 characters of the transcript. If not related in the slightest, discard it — check the line off with `(discarded: not health-related)` instead of a note link, do not write a note, and skip it from the concept-linking pass below.
 
 If relevant: read the transcript file yourself, exclude sponsor reads/ad-reads/unrelated product pitches/course-consult pitches/membership asks from concept extraction (raw transcript stays untouched), then save `Research/YouTube/YYYY-MM-DD - <title-slug>.md` with `type: youtube` frontmatter (`cost-usd: 0`) and the same body structure as `/youtube-channel` step 8: `## For future Claude`, `## TL;DR`, `## Key Points`, `## Notable Quotes` (verbatim, copied character-for-character from the transcript - never paraphrased), `## Themes & Topics`, `## Worth Following Up On`. If a video fails (no captions, private, deleted), still check it off (so it's not retried forever) but append `(failed: <reason>)` after the URL on its line instead of a note link.

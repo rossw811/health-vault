@@ -51,19 +51,15 @@ For each new video ID, in order:
 ```bash
 yt-dlp --skip-download --print title --print description --print channel --print upload_date --print duration_string --print view_count --print like_count "https://www.youtube.com/watch?v=<video-id>"
 ```
-2. Fetch the free transcript (needed either way — for the relevance skim if title/description is ambiguous, or for the full note if it's relevant):
+2. Fetch the transcript via the single unified entry point — **do not call the official-captions path and the Whisper fallback separately, and never decide yourself which one to use.** `scripts/fetch_transcript_auto.py` already tries official captions first and automatically falls back to local Whisper transcription (audio download + `faster-whisper`) if that fails with `IpBlocked`/`RequestBlocked`/`429` — this is fully automatic, no judgment call needed on your part:
 ```bash
-uv run --directory "SKILL_ROOT" python -c "
-import sys
-sys.path.insert(0, '.')
-from scripts.research.lib.youtube import get_transcript
-print(get_transcript(sys.argv[1]) or '')
-" "<video-id>" > "<tmp-file>"
+python scripts/fetch_transcript_auto.py "<video-id>" > "<tmp-file>" 2> "<diag-file>"
 ```
-3. If the transcript is empty (no captions), log it as failed and move on — do not fabricate content.
+Check `<diag-file>` (stderr) for which method actually produced the transcript — it prints `method: official captions` or `method: local whisper`. If it's `local whisper`, set `transcript_source: whisper-local` in the video's frontmatter in step 6 (omit the field entirely for the normal official-caption path — same "verbatim from what was actually read" guarantee either way, just worth being honest about the origin). Needs `ffmpeg` on PATH and `faster-whisper` installed for the fallback to work — if both methods fail (exit code 1), the diagnostic file explains why (genuine caption absence vs. a missing local dependency vs. both methods blocked). Never use a third-party "free transcript" site as a substitute — at least one has already been taken down over this exact use case, real demonstrated legal risk, not a theoretical one.
+3. If the transcript is still empty after this (script exited 1), log it as failed and move on — do not fabricate content.
 4. **Relevance check.** Before doing any real extraction, judge whether this video is about health, fitness/athletic performance, or mental health in any way. Decide from title + description first; if genuinely ambiguous, read the first ~2000 characters of the fetched transcript before deciding — don't skip straight to a transcript read for every video, only when title/description doesn't settle it. If it's not related in the slightest (e.g. a fitness channel's off-topic vlog, unboxing, unrelated Q&A), **discard**: do not write a `Research/YouTube/` note, add its ID to `processed_video_ids` tagged `skipped-irrelevant` in state so it's never re-checked, and record it in the rollup's skipped list with a one-line reason. Move to the next video.
 5. Read the transcript file yourself (Read tool) and write the note. Before treating anything as a "concept," identify and exclude promotional material — sponsor reads/ad-reads, "use code X" segments, unrelated third-party product pitches, the creator's own paid-course/consult pitches, Patreon/membership asks. Leave the raw transcript untouched conceptually (don't let promo segments generate or update Concept notes, don't count them toward "recurring concepts" in step 9). If a video is ENTIRELY promotional, note it as content-free in the rollup instead of forcing an extraction.
-6. Save `Research/YouTube/YYYY-MM-DD - <title-slug>.md` with `type: youtube` frontmatter (date, time, video-id, video-url, title, channel, published, view-count, like-count, duration, tags: [research, youtube], `ai-first: true`, `cost-usd: 0`) and body:
+6. Save `Research/YouTube/YYYY-MM-DD - <title-slug>.md` with `type: youtube` frontmatter (date, time, video-id, video-url, title, channel, published, view-count, like-count, duration, tags: [research, youtube], `ai-first: true`, `cost-usd: 0`, and `transcript_source: whisper-local` only if step 7.2b's fallback was used — omit the field entirely for the normal platform-caption path) and body:
    - `## For future Claude` preamble noting this is Claude-written directly from the free transcript (no external summarization model), quotes are verbatim.
    - `## TL;DR` (2-3 sentences)
    - `## Key Points` (5-12 specific bullets, promo material excluded)

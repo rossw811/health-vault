@@ -40,7 +40,15 @@ for ($i = 1; $i -le $maxAttempts; $i++) {
     # Same PowerShell 5.1 stderr-wrapping gotcha as the YouTube loop - never
     # use `2>&1` on a native executable, redirect stderr to its own file instead.
     $stderrTmp = "$logFile.stderr.tmp"
-    python scripts\podcast_collector.py 2>$stderrTmp | Tee-Object -FilePath $logFile -Append
+    # --parallel 1, 2026-07-26: same memory-pressure fix as run-youtube-queue-loop.ps1 -
+    # this machine hit 0GB free with both collectors running 2 workers each (4 Whisper
+    # models loaded concurrently), which was directly causing worker OOM-crashes.
+    # --cpu-threads 4, 2026-07-27: see the matching comment in
+    # run-youtube-queue-loop.ps1 - the whisper.cpp engine swap made the old
+    # "split 12 cores 6/6" assumption stale and actually wrong; a controlled
+    # 2-concurrent-process sweep found 4 threads/process as the true optimum
+    # (127s/152s vs. 6/6's 260s/284s on identical test clips), not 6.
+    python scripts\podcast_collector.py --parallel 1 --cpu-threads 4 2>$stderrTmp | Tee-Object -FilePath $logFile -Append
     $exitCode = $LASTEXITCODE
     if (Test-Path $stderrTmp) {
         Get-Content $stderrTmp -ErrorAction SilentlyContinue | Add-Content $logFile

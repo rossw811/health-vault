@@ -36,6 +36,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from collector_common import append_checkpoint_log, is_eligible_for_retry, record_result
 
+# Real incident 2026-07-26: printing an episode title containing a non-cp1252
+# character (e.g. accented foreign names) crashed the whole process with
+# UnicodeEncodeError when stdout was piped through the Windows Task Scheduler
+# wrapper (console encoding defaults to cp1252, not UTF-8) - killed the entire
+# collector run after the crashing print, not just that one episode's log line
+# (the result itself was already written to disk beforehand, so no data was
+# lost, but the run died and had to be restarted manually). reconfigure() is
+# Python 3.7+; safe here since the rest of this script already assumes 3.10+.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 VAULT_ROOT = Path("C:/Users/RossW/Projects/Health")
 QUEUE_FILE = VAULT_ROOT / "Podcast Queue.md"
 RAW_DIR = VAULT_ROOT / "Research" / "Podcasts" / "Raw"
@@ -86,17 +98,29 @@ def save_json(path: Path, data):
 
 
 def extract_feed_urls_from_queue() -> list[str]:
-    """Every RSS feed URL on an unchecked `- [ ]` line."""
-    urls = []
+    """Every RSS feed URL on an unchecked `- [ ]` line, with URLs under a
+    heading containing "PRIORITY" moved to the front - same fix as
+    collect_raw_transcripts.py's extract_urls_from_queue() (2026-07-26), for
+    the same reason: a priority heading is advisory-only unless something
+    actually sorts by it, since feed parsing runs through a thread pool whose
+    completion order doesn't match file order."""
+    priority_urls = []
+    normal_urls = []
+    in_priority_section = False
     if not QUEUE_FILE.exists():
-        return urls
+        return priority_urls
     for line in QUEUE_FILE.read_text(encoding="utf-8").splitlines():
-        if not line.strip().startswith("- [ ]"):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            in_priority_section = "PRIORITY" in stripped.upper()
+            continue
+        if not stripped.startswith("- [ ]"):
             continue
         match = re.search(r"https?://\S+", line)
         if match:
-            urls.append(match.group(0).rstrip(")"))
-    return urls
+            url = match.group(0).rstrip(")")
+            (priority_urls if in_priority_section else normal_urls).append(url)
+    return priority_urls + normal_urls
 
 
 def safe_slug(title: str) -> str:
@@ -238,10 +262,16 @@ def _build_worklist(collected: dict) -> list[dict]:
     retry with nothing but the ID itself), a podcast episode needs its full
     dict again to retry. So retry eligibility is checked here, against each
     freshly-parsed episode, rather than as a separate ID-only list."""
-    feed_urls = extract_feed_urls_from_queue()
+    feed_urls = extract_feed_urls_from_queue()  # priority-section feeds already sorted first
     episodes = []
     retry_count_this_pass = 0
     if feed_urls:
+        # Parsing itself still runs concurrently, but results are assembled
+        # back out in feed_urls' own (priority-first) order, not whichever
+        # feed happens to parse fastest - as_completed() order would
+        # otherwise silently defeat the priority-section sort above (same
+        # fix as collect_raw_transcripts.py's _build_worklist, 2026-07-26).
+        episodes_by_url = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(feed_urls))) as executor:
             futures = {executor.submit(parse_rss_feed, url): url for url in feed_urls}
             for future in concurrent.futures.as_completed(futures):
@@ -252,13 +282,15 @@ def _build_worklist(collected: dict) -> list[dict]:
                     print(f"feed {url}: FAILED to parse - {exc}")
                     continue
                 print(f"feed {url}: {len(feed_episodes)} episodes")
-                for ep in feed_episodes:
-                    eid = episode_id(ep["guid"])
-                    if eid not in collected:
-                        episodes.append(ep)
-                    elif is_eligible_for_retry(collected[eid]):
-                        episodes.append(ep)
-                        retry_count_this_pass += 1
+                episodes_by_url[url] = feed_episodes
+        for url in feed_urls:
+            for ep in episodes_by_url.get(url, []):
+                eid = episode_id(ep["guid"])
+                if eid not in collected:
+                    episodes.append(ep)
+                elif is_eligible_for_retry(collected[eid]):
+                    episodes.append(ep)
+                    retry_count_this_pass += 1
 
     if retry_count_this_pass:
         print(f"{retry_count_this_pass} previously-failed episode(s) eligible for retry this pass.")
@@ -277,17 +309,43 @@ def _run(parallel: int = 4, model_size: str = "small", cpu_threads: int = 3) -> 
         print("\nNothing new to collect this pass.")
         return 0
 
+    pool_broken = False
+    remaining_unprocessed = 0
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=parallel, initializer=_worker_init, initargs=(model_size, cpu_threads)
     ) as executor:
         futures = {executor.submit(_process_one_episode, ep): ep for ep in episodes}
+        pending = set(futures)
         for future in concurrent.futures.as_completed(futures):
+            pending.discard(future)
             ep = futures[future]
             eid = episode_id(ep["guid"])
             try:
                 result = future.result()
-            except Exception as exc:  # noqa: BLE001 - a worker crash shouldn't take down the whole pool
+            except concurrent.futures.BrokenExecutor as exc:
+                # Same fix as collect_raw_transcripts.py, 2026-07-26: once one worker
+                # crashes catastrophically, the whole pool is permanently broken and
+                # every remaining submission raises this same error instantly - don't
+                # record those as real per-episode failures (that burns their retry
+                # budget for nothing). Stop this pass, leave the rest genuinely unattempted.
+                print(
+                    f"\nProcess pool broken ({exc}) - stopping this pass early. "
+                    f"{len(pending)} episode(s) left unprocessed (not marked failed - "
+                    "will be attempted fresh next run, not treated as a retry)."
+                )
+                pool_broken = True
+                remaining_unprocessed = len(pending)
+                break
+            except Exception as exc:  # noqa: BLE001 - a single worker crash shouldn't take down the whole pool
                 result = {"episode_id": eid, "status": "failed", "reason": f"worker crashed: {exc}"[:300], "title": ep.get("title", "")}
+                outcome = write_result_to_disk(result, collected)
+                print(f"{ep['title'][:60]}: {outcome}")
+                if outcome.startswith("failed"):
+                    total_failed += 1
+                elif outcome.startswith("permanently-failed"):
+                    total_permanent += 1
+                save_json(COLLECTED_IDS_FILE, collected)
+                continue
             outcome = write_result_to_disk(result, collected)
             print(f"{ep['title'][:60]}: {outcome}")
             if outcome.startswith("ok"):
@@ -297,6 +355,14 @@ def _run(parallel: int = 4, model_size: str = "small", cpu_threads: int = 3) -> 
             elif outcome.startswith("failed"):
                 total_failed += 1
             save_json(COLLECTED_IDS_FILE, collected)
+
+    if pool_broken:
+        print(
+            f"\nStopped early after a broken process pool: {total_ok} ok, {total_failed} failed, "
+            f"{remaining_unprocessed} left for the next attempt. Exiting so the wrapper script "
+            "restarts with a fresh pool rather than continuing to churn through guaranteed failures."
+        )
+        return 1
 
     print(f"\nDone this pass: {len(episodes)} attempted, {total_ok} saved, {total_failed} failed (will retry), {total_permanent} gave up permanently.")
     append_checkpoint_log(CHECKPOINT_LOG_FILE, {

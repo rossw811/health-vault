@@ -23,6 +23,25 @@ foreach ($p in $orphans) {
     }
 }
 
+# whisper-cli.exe (added 2026-07-27, when whisper.cpp replaced faster-whisper as
+# the transcription engine - see buglog.md) is a real orphan risk of its own:
+# it's a plain subprocess.run() child of a collector worker, with no
+# "spawn_main" signature at all, so the check above never sees it. Found one
+# genuine orphan of this kind the same day this was added (parent process
+# already gone, whisper-cli.exe still running, ~860MB held). Uses
+# ParentProcessId directly rather than command-line parsing since whisper-cli's
+# own parent tracking is a normal OS-level relationship, not a
+# multiprocessing-bootstrap string to regex out.
+$whisperOrphans = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'whisper-cli.exe' }
+foreach ($p in $whisperOrphans) {
+    $checkedCount++
+    $parentAlive = $null -ne (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" -ErrorAction SilentlyContinue)
+    if (-not $parentAlive) {
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+        $killedCount++
+    }
+}
+
 # Exclusion-list guard: age/inactivity must never be a valid exclusion reason
 # (stated explicitly by the user, twice - see CLAUDE.md's Source quality section
 # and feedback_no_age_based_exclusions.md). Self-correcting: if this is ever

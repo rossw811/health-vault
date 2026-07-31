@@ -32,10 +32,15 @@ from pathlib import Path
 # logic changes, etc.) - NOT for unrelated changes (e.g. adding a new
 # platform). Every failed entry with an older version becomes immediately
 # retry-eligible, regardless of backoff timing.
-PIPELINE_VERSION = 3  # 2026-07-25 (later): worker count reduced 4->2 per collector + scripts/stop-collectors.ps1
-# built to properly clean up orphaned ProcessPoolExecutor workers - fixes the memory-exhaustion incident that
-# caused ~6,900 "worker crashed: process pool terminated abruptly" failures between 19:56-19:59. Was 2 before
-# this bump: 2026-07-25 ffmpeg-location + KMP_DUPLICATE_LIB_OK fixes, SponsorBlock/VAD/batched inference.
+PIPELINE_VERSION = 4  # 2026-07-26: three real fixes bundled into this bump - (1) priority-section
+# queue ordering actually respected now (extract_urls_from_queue/extract_feed_urls_from_queue),
+# (2) BrokenExecutor detected and stopped early instead of burning thousands of guaranteed
+# failures through a dead process pool, (3) yt-dlp's Whisper-fallback audio download fixed
+# (--js-runtimes node) after a yt-dlp update broke it for every video with "No supported
+# JavaScript runtime could be found." All 426 Huberman videos and ~14,947 broken-pool-era
+# entries were stuck in backoff with zero real chance of succeeding under the old code -
+# this bump makes them retry-eligible immediately rather than waiting out 1-30 day windows.
+# Was 3 before this bump: 2026-07-25 (later) worker count reduced 4->2 + stop-collectors.ps1.
 
 MAX_RETRIES = 5
 RETRY_BACKOFF_DAYS = [1, 3, 7, 14, 30]  # index by retry_count, clamped to last entry

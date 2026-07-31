@@ -17,8 +17,11 @@ pyyaml
 
 # Optional — local fallback transcription (scripts/whisper_transcribe.py) for when
 # YouTube's caption-serving endpoint is IP-blocked but video/audio download still works.
-# Also needs ffmpeg on PATH. Not required for normal operation.
-# faster-whisper
+# As of 2026-07-27 this shells out to a locally-built whisper.cpp binary (native ARM64,
+# see buglog.md) rather than a pip package — no Python ML dependency needed here, just
+# ffmpeg on PATH and the compiled binary + model under
+# %LOCALAPPDATA%\HealthVault-Tools\whisper-cpp\ (built from ggml-org/whisper.cpp source,
+# not redistributed here). Not required for normal operation.
 
 # Dev tooling — lint/format (ruff), schema validation (pandera), fast dataframes
 # for larger corpora (polars, e.g. the raw-transcript metadata as it scales up).

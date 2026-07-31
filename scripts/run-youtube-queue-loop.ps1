@@ -50,7 +50,23 @@ for ($i = 1; $i -le $maxAttempts; $i++) {
     # when the process itself succeeds. Redirect stderr to its own file instead, then
     # append it to the log afterward - stdout still streams live via Tee-Object.
     $stderrTmp = "$logFile.stderr.tmp"
-    python scripts\collect_raw_transcripts.py 2>$stderrTmp | Tee-Object -FilePath $logFile -Append
+    # --parallel 1 (down from the script's own default of 2), 2026-07-26: confirmed via
+    # live memory check that running this collector's 2 workers alongside
+    # podcast_collector.py's own 2 (4 Whisper "small" models loaded concurrently) drove
+    # this 15.6GB machine to 0GB free, which was directly causing worker OOM-crashes that
+    # then broke the whole ProcessPoolExecutor for the rest of that pass (see buglog.md).
+    # Revert to 2 if this machine's other memory pressure eases or gets its own headroom.
+    # --cpu-threads 4, 2026-07-27: the whisper.cpp engine swap (see buglog.md)
+    # made the old --cpu-threads 6 ("split the 12 cores 6/6 with the podcast
+    # collector") stale and, it turns out, actively wrong for this engine - a
+    # controlled 2-concurrent-process sweep (this collector's exact real-world
+    # condition: both collectors' whisper-cli.exe running at once) found a
+    # clear parabolic curve with 4 threads/process as the true minimum: 4/4
+    # threads finished a fixed pair of test clips in 127s/152s vs. 6/6's
+    # 260s/284s and 8/8's 800s+ (severe thread-contention thrashing well before
+    # full CPU saturation on this hardware). Do not "helpfully" split evenly
+    # again without re-running that sweep - the old assumption doesn't hold.
+    python scripts\collect_raw_transcripts.py --parallel 1 --cpu-threads 4 2>$stderrTmp | Tee-Object -FilePath $logFile -Append
     $exitCode = $LASTEXITCODE
     if (Test-Path $stderrTmp) {
         Get-Content $stderrTmp -ErrorAction SilentlyContinue | Add-Content $logFile

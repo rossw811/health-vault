@@ -26,7 +26,9 @@ Most "AI + your notes" tools stop at retrieval — they answer questions about w
 
 ## Repo scope — tooling only, content never leaves this machine
 
-**This repo tracks the generic tooling only**: `.claude/commands/`, `.claude/settings.json`, `.mcp.json`, `scripts/`, `.gitignore`, `.env.example`, `CLAUDE.md`, `_CLAUDE.md`, this file, and `requirements.txt`. **All actual vault content — every note, every source, every piece of personal data — is gitignored and stays local-only.** See `.gitignore` for the full list and the "Repo scope" section of `CLAUDE.md` for the reasoning. If you fork this for your own vault, this boundary is the whole point: clone the tooling, build your own private content on top of it, and nothing personal ever needs to touch a remote.
+**This repo tracks the generic tooling only**: `.claude/commands/`, `.claude/settings.json`, `.mcp.json`, `scripts/`, `.gitignore`, `.env.example`, `CLAUDE.md`, `_CLAUDE.md`, this file, `CONTRIBUTIONS.md`, and `requirements.txt`. **All actual vault content — every note, every source, every piece of personal data — is gitignored and stays local-only.** See `.gitignore` for the full list and the "Repo scope" section of `CLAUDE.md` for the reasoning. If you fork this for your own vault, this boundary is the whole point: clone the tooling, build your own private content on top of it, and nothing personal ever needs to touch a remote.
+
+**Forking this for a different biometric device, transcription engine, or domain entirely?** See `CONTRIBUTIONS.md` — a guide to every swappable subsystem (Oura → Whoop/Apple Watch, whisper.cpp → a different engine, the YouTube ingestion mechanics, the athletic/mental-health domain focus itself) and what contract a replacement needs to satisfy.
 
 ## Prerequisites
 
@@ -39,6 +41,7 @@ Most "AI + your notes" tools stop at retrieval — they answer questions about w
 - [GitHub CLI (`gh`)](https://cli.github.com/) if you want to push a fork/clone of this tooling to your own private repo
 - An [Oura Ring](https://ouraring.com/) personal access token if you want biometric correlation (optional — everything else works without it)
 - `ffmpeg` — optional, only needed if you ever fall back to local audio-based transcription (see Troubleshooting)
+- A compiled [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp) binary + a `ggml-small.bin` model — optional, same fallback path as `ffmpeg` above. Not redistributed in this repo (build it yourself, or swap in a different local/cloud transcription engine — see `CONTRIBUTIONS.md`).
 
 ## Setup (fresh machine)
 
@@ -126,7 +129,9 @@ Manage/inspect via Task Scheduler (`taskschd.msc`). **`/process-raw-transcripts`
 2. **A rotating residential proxy** (Webshare is built directly into `youtube-transcript-api` via `WebshareProxyConfig`) is the documented, reliable paid fix if a different IP isn't practical.
 3. Cookie-based authentication is **not** a working fix — it's currently broken upstream in `youtube-transcript-api` itself.
 4. **Third-party "free transcript" sites are not a safe alternative** — at least one (a site that Whisper-transcribed Huberman Lab episodes) has already been taken down following a legal notice. Real, demonstrated legal risk, not a theoretical one — treated the same way this vault excludes Internet Archive's contested lending library from `/book-discovery`.
-5. **Local Whisper transcription is built and wired in as an automatic fallback** (`scripts/whisper_transcribe.py`, `pip install faster-whisper` + `ffmpeg` on PATH): downloads only the audio track (unaffected by the caption-endpoint block) and transcribes it locally. `youtube-channel.md`/`youtube-queue.md` fall back to it automatically on `IpBlocked`/`RequestBlocked`/`429` specifically — notes made this way get `transcript_source: whisper-local` in frontmatter, since it's the platform's audio transcribed by us rather than its own official captions.
+5. **Local transcription is built and wired in as an automatic fallback** (`scripts/whisper_transcribe.py` + `ffmpeg` on PATH): downloads only the audio track (unaffected by the caption-endpoint block) and transcribes it locally. `youtube-channel.md`/`youtube-queue.md` fall back to it automatically on `IpBlocked`/`RequestBlocked`/`429` specifically — notes made this way get `transcript_source: whisper-local` in frontmatter, since it's the platform's audio transcribed by us rather than its own official captions. **Engine: [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp)**, built from source (not redistributed here — see Prerequisites and `CONTRIBUTIONS.md` for swapping this out for a different engine, e.g. if you're not on Windows ARM64).
+
+**`yt-dlp` audio download fails with `403 Forbidden` or "Requested format is not available."** Usually not an anti-bot/authentication issue despite how it looks — it's yt-dlp needing an updated JS-challenge-solver component it doesn't bundle by default. Fix: add `--remote-components ejs:github` to the yt-dlp invocation (already present in `scripts/whisper_transcribe.py`'s `download_audio()` as of 2026-07-27). Cookie-based authentication was investigated as an alternative fix and found to be a dead end on Windows specifically — modern Chrome/Edge's Application-Bound Encryption blocks any external tool (including yt-dlp) from decrypting their cookie store, and yt-dlp's own OAuth2 login was removed in current releases — the `--remote-components` flag above is the actual fix, not cookies.
 
 ## History rewrites
 

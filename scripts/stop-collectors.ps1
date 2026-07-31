@@ -25,10 +25,21 @@ foreach ($p in $mainProcs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction S
 $orphans = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*spawn_main*' }
 foreach ($p in $orphans) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 
+# whisper-cli.exe (added 2026-07-27 when whisper.cpp replaced faster-whisper -
+# see buglog.md) is a plain subprocess.run() child, not a multiprocessing
+# worker, so it has neither the main-process command-line patterns above nor
+# the spawn_main signature - killing its python.exe parent does NOT kill it.
+# Found this the hard way: this script reported "stopped" while two
+# whisper-cli.exe processes from well before the stop kept running for over
+# 40 minutes afterward, silently invalidating a controlled thread-count test.
+# Always kill these explicitly by name whenever collectors are stopped.
+$whisperProcs = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'whisper-cli.exe' }
+foreach ($p in $whisperProcs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+
 Start-Sleep -Seconds 2
 
 Remove-Item 'C:\Users\RossW\Projects\Health\Research\YouTube\Raw\.collector.lock' -ErrorAction SilentlyContinue
 Remove-Item 'C:\Users\RossW\Projects\Health\Research\Podcasts\Raw\.collector.lock' -ErrorAction SilentlyContinue
 
-Write-Host "Stopped $($mainProcs.Count) main process(es) and $($orphans.Count) orphaned worker(s)."
+Write-Host "Stopped $($mainProcs.Count) main process(es), $($orphans.Count) orphaned worker(s), and $($whisperProcs.Count) whisper-cli.exe process(es)."
 Get-CimInstance Win32_OperatingSystem | Select-Object @{n='FreeGB';e={[math]::Round($_.FreePhysicalMemory/1MB,1)}}

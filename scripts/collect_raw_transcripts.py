@@ -39,6 +39,15 @@ from collector_common import (
     retry_eligible_ids,
 )
 
+# Same fix as podcast_collector.py, 2026-07-26: a video title with a non-cp1252
+# character printed to a Task Scheduler-piped stdout (console default cp1252,
+# not UTF-8) would crash the whole process with UnicodeEncodeError, killing
+# the run past whatever result had already been written to disk. reconfigure()
+# is Python 3.7+.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 VAULT_ROOT = Path("C:/Users/RossW/Projects/Health")
 QUEUE_FILE = VAULT_ROOT / "YouTube Queue.md"
 RAW_DIR = VAULT_ROOT / "Research" / "YouTube" / "Raw"
@@ -101,16 +110,33 @@ def save_json(path: Path, data):
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def extract_urls_from_queue() -> list[str]:
-    """Every URL found on an unchecked `- [ ]` line, in file order."""
-    urls = []
+def extract_urls_from_queue() -> tuple[list[str], list[str]]:
+    """Every URL found on an unchecked `- [ ]` line, split into (priority_urls,
+    normal_urls) based on whether it's under a heading containing "PRIORITY".
+    Returned as a tuple rather than one concatenated list (2026-07-26) so
+    callers can also identify which specific video IDs came from a priority
+    channel later - a real gap in the first version of this fix: retry-eligible
+    videos (see _build_worklist) are looked up by ID from the whole
+    collected-history dict, not re-derived from this function's ordering, so
+    concatenating the two lists here only prioritized brand-new channel videos
+    and silently left retries (which is where almost an entire priority
+    channel's backlog ends up, once it's been attempted and failed once)
+    unprioritized."""
+    priority_urls = []
+    normal_urls = []
+    in_priority_section = False
     for line in QUEUE_FILE.read_text(encoding="utf-8").splitlines():
-        if not line.strip().startswith("- [ ]"):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            in_priority_section = "PRIORITY" in stripped.upper()
+            continue
+        if not stripped.startswith("- [ ]"):
             continue
         match = re.search(r"https?://\S+", line)
         if match:
-            urls.append(match.group(0).rstrip(")"))
-    return urls
+            url = match.group(0).rstrip(")")
+            (priority_urls if in_priority_section else normal_urls).append(url)
+    return priority_urls, normal_urls
 
 
 def is_channel_url(url: str) -> bool:
@@ -346,24 +372,41 @@ def _build_worklist(collected: dict) -> list[str]:
     A thread pool (not the process pool used for transcription - no GIL
     contention issue here since these are just waiting on subprocess I/O) fixes
     this cheaply."""
-    urls = extract_urls_from_queue()
+    priority_urls, normal_urls = extract_urls_from_queue()
+    urls = priority_urls + normal_urls
     channel_urls = [u for u in urls if is_channel_url(u)]
+    priority_channel_urls = {u for u in priority_urls if is_channel_url(u)}
     single_urls = [u for u in urls if not is_channel_url(u)]
 
-    video_ids = []
+    new_video_ids = []
+    # video_id -> channel_url, not a flat set (2026-07-27 fix - see below):
+    # retry ordering needs to know WHICH priority channel a video came from,
+    # not just that it came from some priority channel.
+    priority_video_ids: dict[str, str] = {}
     if channel_urls:
+        # Enumeration itself still runs concurrently (I/O-bound, no reason to
+        # serialize it) but results are assembled back out in channel_urls'
+        # own (priority-first) order, not whichever channel's yt-dlp call
+        # happens to finish first - as_completed() order would otherwise
+        # silently defeat the priority-section sort above.
+        results_by_url = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(channel_urls))) as executor:
             futures = {executor.submit(list_channel_video_ids, url): url for url in channel_urls}
             for future in concurrent.futures.as_completed(futures):
                 url = futures[future]
                 channel_video_ids = future.result()
                 print(f"channel {url}: {len(channel_video_ids)} videos")
-                video_ids.extend(vid for vid in channel_video_ids if vid not in collected)
+                results_by_url[url] = channel_video_ids
+                if url in priority_channel_urls:
+                    for vid in channel_video_ids:
+                        priority_video_ids[vid] = url
+        for url in channel_urls:
+            new_video_ids.extend(vid for vid in results_by_url.get(url, []) if vid not in collected)
 
     for url in single_urls:
         vid = extract_video_id(url)
         if vid and vid not in collected:
-            video_ids.append(vid)
+            new_video_ids.append(vid)
 
     # Failed-video retry system (2026-07-25): a video that failed once is not
     # gone forever - if the pipeline has since changed (version bump) or
@@ -371,7 +414,49 @@ def _build_worklist(collected: dict) -> list[str]:
     retry_ids = retry_eligible_ids(collected)
     if retry_ids:
         print(f"{len(retry_ids)} previously-failed video(s) eligible for retry this pass.")
-        video_ids.extend(retry_ids)
+
+    # Real gap found 2026-07-26, then a deeper version of the same gap found
+    # 2026-07-27 - three iterations to get this right, all kept here so the
+    # reasoning isn't lost:
+    #   v1 (2026-07-26): sorted priority-ness WITHIN new and WITHIN retry
+    #   separately, but put ALL new videos (any channel) ahead of ALL retries -
+    #   a fully-enumerated priority channel (nothing "new" left) still lost to
+    #   an unrelated channel's brand-new videos.
+    #   v2 (2026-07-26, later): grouped priority-as-a-block ahead of
+    #   non-priority-as-a-block, new-vs-retry second - fixed the above, but
+    #   `retry_eligible_ids()` returns videos in raw historical dict-insertion
+    #   order with no channel awareness, so WITHIN the priority-retry block,
+    #   a lower-ranked priority channel's retries could land ahead of a
+    #   higher-ranked one's.
+    #   v3 (2026-07-27): fixed v2's internal retry-block ordering by channel
+    #   rank - but this exposed a THIRD, deeper gap: `priority_new` still came
+    #   entirely ahead of `priority_retry` as separate tiers, so a channel that
+    #   simply publishes on an ongoing basis (Peter Attia's podcast) could
+    #   perpetually generate brand-new episodes that jump the entire queue
+    #   ahead of Huberman/Vigorous Steve's whole retry backlog (422/427 and
+    #   674/674 videos respectively, from the 2026-07-25 mass-failure
+    #   incident) - forever, since there's always another new Attia episode.
+    #   Confirmed live: even after the v3-only fix and a collector restart,
+    #   the very first video processed was still a brand-new Peter Attia
+    #   episode, not Huberman/Vigorous Steve, exactly this failure mode.
+    # Final structure: channel rank is the primary sort key for ALL priority
+    # videos (new and retry together), new-before-retry only as a tiebreaker
+    # within the same channel - so Huberman's entire catalog (new + retry)
+    # is exhausted before Vigorous Steve's, before Ben Winney's, etc., and a
+    # lower-ranked priority channel's fresh content can never preempt a
+    # higher-ranked channel's backlog.
+    channel_rank = {url: i for i, url in enumerate(channel_urls)}
+    priority_all = sorted(
+        [(v, False) for v in new_video_ids if v in priority_video_ids]
+        + [(v, True) for v in retry_ids if v in priority_video_ids],
+        key=lambda item: (channel_rank.get(priority_video_ids[item[0]], len(channel_rank)), item[1]),
+    )
+    priority_ordered = [v for v, _is_retry in priority_all]
+    other_new = [v for v in new_video_ids if v not in priority_video_ids]
+    other_retry = [v for v in retry_ids if v not in priority_video_ids]
+    if priority_ordered:
+        print(f"{len(priority_ordered)} video(s) from priority channels (new + retry combined) - sorted to the very front, by channel rank.")
+    video_ids = priority_ordered + other_new + other_retry
 
     # de-dupe while preserving order, in case the same video appears via
     # multiple queue lines (a channel plus an individually-queued video from it)
@@ -395,16 +480,47 @@ def _run(parallel: int = 4, model_size: str = "small", cpu_threads: int = 3) -> 
         print("\nNothing new to collect this pass.")
         return 0
 
+    pool_broken = False
+    remaining_unprocessed = 0
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=parallel, initializer=_worker_init, initargs=(model_size, cpu_threads)
     ) as executor:
         futures = {executor.submit(_process_one_video, vid): vid for vid in video_ids}
+        pending = set(futures)
         for future in concurrent.futures.as_completed(futures):
+            pending.discard(future)
             vid = futures[future]
             try:
                 result = future.result()
-            except Exception as exc:  # noqa: BLE001 - a worker crash shouldn't take down the whole pool/lose other results
+            except concurrent.futures.BrokenExecutor as exc:
+                # Real incident 2026-07-26: one worker crash (OOM, segfault) makes the
+                # WHOLE pool permanently broken - every other pending/future submission
+                # raises this same error instantly, not just the video that triggered it.
+                # The old blanket `except Exception` here silently recorded every one of
+                # those as a genuine per-video "failed" result, burning through an entire
+                # multi-thousand-video worklist in minutes with zero real work done and
+                # needlessly consuming each video's limited retry budget. Stop immediately
+                # instead - leave every not-yet-completed video untouched (still "new" for
+                # the next run, no retry count spent) and let the wrapper script's loop
+                # restart with a fresh, healthy pool.
+                print(
+                    f"\nProcess pool broken ({exc}) - stopping this pass early. "
+                    f"{len(pending)} video(s) left unprocessed (not marked failed - "
+                    "will be attempted fresh next run, not treated as a retry)."
+                )
+                pool_broken = True
+                remaining_unprocessed = len(pending)
+                break
+            except Exception as exc:  # noqa: BLE001 - a single worker crash shouldn't take down the whole pool/lose other results
                 result = {"video_id": vid, "status": "failed", "reason": f"worker crashed: {exc}"[:300], "title": ""}
+                outcome = write_result_to_disk(result, collected)
+                print(f"{vid}: {outcome}")
+                if outcome.startswith("failed"):
+                    total_failed += 1
+                elif outcome.startswith("permanently-failed"):
+                    total_permanent += 1
+                save_json(COLLECTED_IDS_FILE, collected)
+                continue
             outcome = write_result_to_disk(result, collected)
             print(f"{vid}: {outcome}")
             if outcome.startswith("ok"):
@@ -418,6 +534,14 @@ def _run(parallel: int = 4, model_size: str = "small", cpu_threads: int = 3) -> 
             elif outcome.startswith("qc-failed"):
                 total_qc_failed += 1
             save_json(COLLECTED_IDS_FILE, collected)  # after every result - a crash loses at most one in-flight video
+
+    if pool_broken:
+        print(
+            f"\nStopped early after a broken process pool: {total_ok} ok, {total_failed} failed, "
+            f"{remaining_unprocessed} left for the next attempt. Exiting so the wrapper script "
+            "restarts with a fresh pool rather than continuing to churn through guaranteed failures."
+        )
+        return 1
 
     print(
         f"\nDone this pass: {len(video_ids)} new attempted, {total_ok} raw transcripts saved, "

@@ -27,6 +27,11 @@ development.md
 buglog.md
 ideas.md
 
+# Vault content that leaked into a root-level file (2026-08-01 audit — see buglog.md).
+# Word docs and Obsidian canvases are always personal content, never tooling, in this repo.
+*.docx
+*.canvas
+
 # Scratch / transient test data — not tooling, not real vault content either
 tmp_transcripts/
 __pycache__/

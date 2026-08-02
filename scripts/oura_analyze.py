@@ -43,6 +43,22 @@ NUMERIC_FIELDS = [
     "sleep_avg_breath", "sleep_restless_periods", "average_hrv", "resting_hr",
     "activity_score", "steps", "calories_active", "activity_total_min",
     "inactivity_min", "spo2_avg", "training_load_hrs",
+    # Added 2026-08-01: these fields were already validated by schemas.py's
+    # oura_daily_schema but never actually analyzed - synced and checked, then
+    # silently ignored by every function below (correlation, tag comparisons,
+    # rolling trends, anomaly detection, protocol before/after, modeling) since
+    # they all key off this one list. Wiring them in here is the whole fix -
+    # no other function needed to change.
+    "readiness_sleep_regularity", "resilience_sleep_recovery",
+    "resilience_daytime_recovery", "resilience_stress", "cardio_vascular_age",
+    "cardio_pulse_wave_velocity", "vo2_max",
+    "activity_contrib_meet_daily_targets", "activity_contrib_move_every_hour",
+    "activity_contrib_recovery_time", "activity_contrib_stay_active",
+    "activity_contrib_training_frequency", "activity_contrib_training_volume",
+    "activity_equivalent_walking_distance_m", "activity_non_wear_min",
+    "activity_resting_min", "activity_target_calories",
+    "activity_total_calories", "activity_target_meters",
+    "activity_meters_to_target",
 ]
 
 # Below this row count, model results are exploratory-only, not trustworthy.
@@ -387,6 +403,146 @@ def predictive_modeling(df):
     return out
 
 
+def short_vs_long_term_ranges(df, short_window_days=14):
+    """Explicit short-term vs. long-term range comparison, added 2026-08-01.
+    rolling_trends() already reports 7d/28d *means* vs. the overall mean, but
+    that's a single-number comparison - it doesn't say whether the current
+    short-term window is actually operating in a different RANGE (min/max/
+    spread) than the metric's long-term history, which is what 'regime'
+    actually means physiologically (e.g. resting HR has settled 5bpm higher
+    for two weeks - the mean shift alone doesn't tell you if that's a blip or
+    a genuine new operating range). short_window_days=14 (not 7) deliberately
+    differs from rolling_trends' 7d window - this function answers 'has my
+    range shifted', which needs slightly more days to be meaningful than a
+    same-day mean check does."""
+    out = {}
+    if len(df) < 15:
+        return {"note": "fewer than 15 days total - too little history to compare short vs. long-term ranges yet"}
+    cutoff = df["date"].max() - pd.Timedelta(days=short_window_days)
+    for metric in NUMERIC_FIELDS:
+        series = df.set_index("date")[metric].dropna()
+        long_term = series
+        short_term = series[series.index > cutoff]
+        if len(long_term) < 15 or len(short_term) < 5:
+            continue
+        lt_mean, lt_std = float(long_term.mean()), float(long_term.std())
+        st_mean, st_std = float(short_term.mean()), float(short_term.std())
+        if not lt_std or lt_std == 0:
+            continue
+        # Simple, honest divergence flag reusing this file's existing z-score
+        # convention (personal_baseline_anomalies uses the same >=2 threshold)
+        # rather than inventing a new statistical test for this function.
+        z = (st_mean - lt_mean) / lt_std
+        out[metric] = {
+            "short_term_window_days": short_window_days,
+            "short_term": {"n": len(short_term), "mean": round(st_mean, 2), "std": round(st_std, 2) if pd.notna(st_std) else None,
+                            "min": round(float(short_term.min()), 2), "max": round(float(short_term.max()), 2)},
+            "long_term": {"n": len(long_term), "mean": round(lt_mean, 2), "std": round(lt_std, 2),
+                          "min": round(float(long_term.min()), 2), "max": round(float(long_term.max()), 2)},
+            "short_term_mean_z_vs_long_term": round(float(z), 2),
+            "range_shift_flag": abs(z) >= 2,
+        }
+    shifted = {k: v for k, v in out.items() if v["range_shift_flag"]}
+    return {
+        "short_window_days": short_window_days,
+        "n_metrics_compared": len(out),
+        "metrics_with_a_range_shift": shifted,
+        "all_metrics": out,
+    }
+
+
+def regime_analysis(df, k_range=(2, 5)):
+    """K-means clustering over standardized daily biometrics to find distinct
+    'regimes' (recurring physiological/behavioral states), added 2026-08-01.
+    This is genuinely new capability, not wiring up something already present -
+    everything else in this script is correlation/comparison/regression;
+    nothing before this clustered days into groups. k is chosen via silhouette
+    score across k_range rather than fixed, and reported honestly - a low
+    silhouette score means the 'regimes' found are weak/overlapping, not a
+    clean multi-state structure, and this function says so rather than
+    presenting whichever k scored best as if it were a strong finding."""
+    if len(df) < MIN_N_FOR_MODELING:
+        return {"note": f"only {len(df)} days - below the {MIN_N_FOR_MODELING}-day floor this script requires before clustering. Skipping rather than fitting noise."}
+
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
+    from sklearn.preprocessing import StandardScaler
+
+    # Same median-imputation-after-availability-filter approach as
+    # predictive_modeling() - requiring every feature non-null for every row
+    # would leave near-zero usable rows given Oura's per-field sensor/tier
+    # availability gaps.
+    feature_cols = [c for c in NUMERIC_FIELDS if df[c].notna().sum() >= MIN_N_FOR_MODELING]
+    if len(feature_cols) < 3:
+        return {"note": f"only {len(feature_cols)} feature(s) have enough non-null data yet - too few dimensions to cluster meaningfully"}
+    sub = df[["date"] + feature_cols].dropna(thresh=len(feature_cols) // 2 + 1, subset=feature_cols).copy()
+    if len(sub) < MIN_N_FOR_MODELING:
+        return {"note": f"only {len(sub)} rows have enough real (non-imputed-majority) feature coverage - below the {MIN_N_FOR_MODELING}-day floor"}
+    X_raw = sub[feature_cols].fillna(sub[feature_cols].median())
+    X = StandardScaler().fit_transform(X_raw)
+
+    best_k, best_score, best_labels = None, -1.0, None
+    scores_by_k = {}
+    max_k = min(k_range[1], len(sub) // 5)  # never try more clusters than ~5 rows/cluster could support
+    for k in range(k_range[0], max(k_range[0], max_k) + 1):
+        if k >= len(sub):
+            continue
+        labels = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(X)
+        if len(set(labels)) < 2:
+            continue
+        score = silhouette_score(X, labels)
+        scores_by_k[k] = round(float(score), 3)
+        if score > best_score:
+            best_k, best_score, best_labels = k, score, labels
+    if best_k is None:
+        return {"note": "clustering did not converge to any valid k in range - not enough data structure to find regimes yet"}
+
+    sub = sub.assign(_cluster=best_labels)
+    cluster_profiles = []
+    for c in sorted(set(best_labels)):
+        rows = sub[sub["_cluster"] == c]
+        profile_metrics = {}
+        for metric in feature_cols:
+            vals = rows[metric].dropna()
+            if len(vals):
+                profile_metrics[metric] = round(float(vals.mean()), 2)
+        cluster_profiles.append({
+            "cluster": int(c), "n_days": len(rows),
+            "date_range": [rows["date"].min().strftime("%Y-%m-%d"), rows["date"].max().strftime("%Y-%m-%d")],
+            "mean_profile": profile_metrics,
+        })
+
+    # Regime timeline: contiguous date-ordered runs of the same cluster label -
+    # this is what makes it "regime" analysis rather than just a static
+    # grouping - when did the state actually change, not just what states exist.
+    sub_sorted = sub.sort_values("date")
+    timeline = []
+    prev_cluster, run_start = None, None
+    for _, row in sub_sorted.iterrows():
+        if row["_cluster"] != prev_cluster:
+            if prev_cluster is not None:
+                timeline.append({"cluster": int(prev_cluster), "start": run_start, "end": prev_date})
+            prev_cluster, run_start = row["_cluster"], row["date"].strftime("%Y-%m-%d")
+        prev_date = row["date"].strftime("%Y-%m-%d")
+    if prev_cluster is not None:
+        timeline.append({"cluster": int(prev_cluster), "start": run_start, "end": prev_date})
+
+    return {
+        "n_days_clustered": len(sub),
+        "features_used": feature_cols,
+        "k_chosen": best_k,
+        "silhouette_score": round(float(best_score), 3),
+        "silhouette_scores_by_k_tried": scores_by_k,
+        "interpretation_note": (
+            "silhouette_score ranges roughly -1 to 1; below ~0.25 means the clusters found are weak/"
+            "overlapping, not a clean multi-regime structure - report that plainly rather than treating "
+            "a low-silhouette k as a confident finding of distinct regimes."
+        ),
+        "cluster_profiles": cluster_profiles,
+        "regime_timeline": timeline,
+    }
+
+
 def main():
     df = load_daily_frame()
     result = {
@@ -413,6 +569,8 @@ def main():
     result["lag_correlations"] = lag_correlation(df)
     result["protocol_before_after"] = protocol_before_after(df)
     result["predictive_models"] = predictive_modeling(df)
+    result["short_vs_long_term_ranges"] = short_vs_long_term_ranges(df)
+    result["regime_analysis"] = regime_analysis(df)
     print(json.dumps(result, indent=2, default=str))
 
 

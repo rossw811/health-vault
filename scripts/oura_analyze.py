@@ -3,12 +3,28 @@
 
 Design intent (read before changing): with likely a few hundred daily rows and
 dozens of numeric metrics plus a handful of tags, this is a small-N / many-
-features problem. Deep learning is the wrong tool here - it would overfit
-immediately. This script deliberately uses interpretable, appropriately-scaled
-methods (correlations, group comparisons with effect sizes, regularized linear
-models, a shallow cross-validated random forest) and reports honestly when
-there isn't enough data to trust a result. It never prints a naive in-sample
-R^2 or an uncorrected p-value as if it were a finding.
+features problem. The original version of this script deliberately limited
+itself to RidgeCV + a shallow RandomForest and refused deep learning outright.
+Expanded 2026-08-02 per explicit request to widen model coverage (GMM/HMM
+regime detection alongside k-means, XGBoost/ExtraTrees alongside RandomForest,
+a small MLP) - "test for everything" - while keeping the anti-overfitting
+discipline that was the whole point of the original design, not abandoning it:
+- Every regression/classification model is still gated behind MIN_N_FOR_MODELING,
+  and additionally reports an explicit **train-vs-CV R^2 gap** so overfitting
+  shows up as a number (large gap = the in-sample fit is memorizing noise),
+  not something the reader has to infer.
+- The MLP specifically is gated behind a much higher floor
+  (MIN_N_FOR_DEEP_LEARNING) than the other models, strongly regularized, and
+  still reports its own gap - deep learning is no longer banned outright, but
+  it has to earn the right to run on this size of dataset, same as everything
+  else here.
+- HMM regime detection selects its state count by held-out chronological
+  log-likelihood (fit on the first ~80% of days in time order, score on the
+  last ~20%), not in-sample likelihood - the sequential-data equivalent of
+  cross-validation, since shuffling would destroy the temporal structure an
+  HMM is supposed to capture.
+- It never prints a naive in-sample R^2 or an uncorrected p-value as if it
+  were a finding.
 
 Outputs a single JSON blob to stdout - Claude reads this and writes the
 narrative Synthesis note; this script only computes, never interprets.
@@ -64,6 +80,15 @@ NUMERIC_FIELDS = [
 # Below this row count, model results are exploratory-only, not trustworthy.
 MIN_N_FOR_MODELING = 20
 MIN_N_PER_GROUP_FOR_TEST = 5
+# Deep learning specifically needs more rows than the other models before it's
+# worth trying at all - an MLP has far more free parameters than RidgeCV/a
+# shallow tree ensemble, so the same 20-row floor that's defensible for those
+# would just be overfitting theater for a neural net. Gated separately.
+MIN_N_FOR_DEEP_LEARNING = 100
+# A train-vs-CV R^2 gap at or above this is flagged as likely overfitting -
+# the model's in-sample fit is meaningfully better than its held-out
+# performance, i.e. it's partly memorizing rather than generalizing.
+OVERFIT_GAP_THRESHOLD = 0.3
 
 
 def load_daily_frame():
@@ -350,9 +375,31 @@ def predictive_modeling(df):
         )
         return out
 
-    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
     from sklearn.linear_model import RidgeCV
     from sklearn.model_selection import KFold, cross_val_score
+    from sklearn.neural_network import MLPRegressor
+    from sklearn.preprocessing import StandardScaler
+    from xgboost import XGBRegressor
+
+    def _fit_and_score(name, model, X, y, kf, needs_scaling=False):
+        """Fit on the full set (for train R^2 + coefficients/importances) and
+        cross-validate (for the honest out-of-sample estimate). Returns the
+        train-vs-CV gap explicitly - this is the one piece of output every
+        model here shares, so overfitting is comparable across all of them."""
+        Xm = StandardScaler().fit_transform(X) if needs_scaling else X
+        cv_scores = cross_val_score(model, Xm, y, cv=kf, scoring="r2")
+        model.fit(Xm, y)
+        train_r2 = float(model.score(Xm, y))
+        cv_r2_mean = float(cv_scores.mean())
+        gap = round(train_r2 - cv_r2_mean, 3)
+        return model, {
+            "train_r2": round(train_r2, 3),
+            "cv_r2_mean": round(cv_r2_mean, 3),
+            "cv_r2_all_folds": [round(float(s), 3) for s in cv_scores],
+            "overfit_gap": gap,
+            "likely_overfitting": gap >= OVERFIT_GAP_THRESHOLD,
+        }
 
     all_feature_cols = [c for c in NUMERIC_FIELDS if c not in targets]
     k = min(5, n // 4) if n >= 20 else 2
@@ -373,33 +420,93 @@ def predictive_modeling(df):
         X = sub[feature_cols].fillna(sub[feature_cols].median())
         y = sub[target]
         kf = KFold(n_splits=k, shuffle=True, random_state=0)
+        n_sub = len(sub)
 
-        ridge = RidgeCV(alphas=np.logspace(-2, 3, 20))
-        ridge_scores = cross_val_score(ridge, X, y, cv=kf, scoring="r2")
-        ridge.fit(X, y)
+        target_out = {"n_rows": n_sub, "models": {}}
 
-        rf = RandomForestRegressor(n_estimators=200, max_depth=4, min_samples_leaf=max(2, len(sub) // 20), random_state=0)
-        rf_scores = cross_val_score(rf, X, y, cv=kf, scoring="r2")
-        rf.fit(X, y)
+        ridge, ridge_stats = _fit_and_score("ridge", RidgeCV(alphas=np.logspace(-2, 3, 20)), X, y, kf)
+        ridge_stats["top_coefficients"] = sorted(
+            [{"feature": f, "coef": round(float(c), 4)} for f, c in zip(feature_cols, ridge.coef_, strict=True)],
+            key=lambda d: -abs(d["coef"]),
+        )[:8]
+        target_out["models"]["ridge_linear"] = ridge_stats
 
-        out[target] = {
-            "n_rows": len(sub),
-            "ridge_cv_r2_mean": round(float(ridge_scores.mean()), 3),
-            "ridge_cv_r2_all_folds": [round(float(s), 3) for s in ridge_scores],
-            "ridge_top_coefficients": sorted(
-                [{"feature": f, "coef": round(float(c), 4)} for f, c in zip(feature_cols, ridge.coef_, strict=True)],
-                key=lambda d: -abs(d["coef"]),
-            )[:8],
-            "random_forest_cv_r2_mean": round(float(rf_scores.mean()), 3),
-            "random_forest_top_features": sorted(
-                [{"feature": f, "importance": round(float(i), 4)} for f, i in zip(feature_cols, rf.feature_importances_, strict=True)],
-                key=lambda d: -d["importance"],
-            )[:8],
-            "interpretation_note": (
-                "cv_r2_mean near or below 0 means the model found no real predictive signal - "
-                "report that plainly, don't just report the coefficients as if they mattered."
+        rf, rf_stats = _fit_and_score(
+            "random_forest",
+            RandomForestRegressor(n_estimators=200, max_depth=4, min_samples_leaf=max(2, n_sub // 20), random_state=0),
+            X, y, kf,
+        )
+        rf_stats["top_features"] = sorted(
+            [{"feature": f, "importance": round(float(i), 4)} for f, i in zip(feature_cols, rf.feature_importances_, strict=True)],
+            key=lambda d: -d["importance"],
+        )[:8]
+        target_out["models"]["random_forest"] = rf_stats
+
+        et, et_stats = _fit_and_score(
+            "extra_trees",
+            ExtraTreesRegressor(n_estimators=200, max_depth=4, min_samples_leaf=max(2, n_sub // 20), random_state=0),
+            X, y, kf,
+        )
+        et_stats["top_features"] = sorted(
+            [{"feature": f, "importance": round(float(i), 4)} for f, i in zip(feature_cols, et.feature_importances_, strict=True)],
+            key=lambda d: -d["importance"],
+        )[:8]
+        target_out["models"]["extra_trees"] = et_stats
+
+        xgb, xgb_stats = _fit_and_score(
+            "xgboost",
+            XGBRegressor(
+                n_estimators=200, max_depth=3, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
+                random_state=0, verbosity=0, n_jobs=1,
+                # n_jobs=1 is deliberate, not a stray default: XGBoost's own
+                # internal thread pool fighting with cross_val_score's fold
+                # loop caused ~1000s runtimes for a 4-target pass in testing
+                # (2026-08-02) - single-threaded per fit is far faster here
+                # given how small each fold's data is.
             ),
-        }
+            X, y, kf,
+        )
+        xgb_stats["top_features"] = sorted(
+            [{"feature": f, "importance": round(float(i), 4)} for f, i in zip(feature_cols, xgb.feature_importances_, strict=True)],
+            key=lambda d: -d["importance"],
+        )[:8]
+        target_out["models"]["xgboost"] = xgb_stats
+
+        if n_sub >= MIN_N_FOR_DEEP_LEARNING:
+            _, mlp_stats = _fit_and_score(
+                "mlp",
+                MLPRegressor(
+                    hidden_layer_sizes=(8,), activation="relu", alpha=1.0,
+                    # solver='lbfgs', not the sklearn default 'adam': lbfgs is
+                    # the scikit-learn docs' own recommendation for datasets
+                    # this small, converges on exact/quasi-Newton steps
+                    # instead of stochastic mini-batches - 3-4s per CV pass in
+                    # testing (2026-08-02) vs. ~180s for 'adam' with
+                    # early_stopping on the same data, same result quality.
+                    solver="lbfgs", max_iter=1000, random_state=0,
+                ),
+                X, y, kf, needs_scaling=True,
+            )
+            target_out["models"]["mlp_deep_learning"] = mlp_stats
+        else:
+            target_out["models"]["mlp_deep_learning"] = {
+                "skipped": (
+                    f"only {n_sub} rows with a real {target} value, below the "
+                    f"{MIN_N_FOR_DEEP_LEARNING}-row floor this script requires before trying an MLP - "
+                    "a neural net has far more free parameters than the other models here and would "
+                    "just memorize noise at this size."
+                )
+            }
+
+        target_out["interpretation_note"] = (
+            "cv_r2_mean near or below 0 means that model found no real predictive signal - report that "
+            "plainly, don't just report coefficients/importances as if they mattered. overfit_gap "
+            "(train_r2 minus cv_r2_mean) at or above "
+            f"{OVERFIT_GAP_THRESHOLD} (flagged as likely_overfitting) means the in-sample fit is "
+            "partly memorizing rather than generalizing - trust cv_r2_mean over train_r2 for every model here."
+        )
+        out[target] = target_out
     return out
 
 
@@ -451,6 +558,26 @@ def short_vs_long_term_ranges(df, short_window_days=14):
     }
 
 
+def _prepare_regime_features(df):
+    """Shared feature-prep for every regime-detection function (k-means, GMM,
+    HMM) - same median-imputation-after-availability-filter approach as
+    predictive_modeling(), factored out so all three clustering methods work
+    from identical inputs and are actually comparable to each other. Returns
+    (sub_df_with_date, X_scaled, feature_cols) or (None, None, None) with a
+    reason if there isn't enough data."""
+    from sklearn.preprocessing import StandardScaler
+
+    feature_cols = [c for c in NUMERIC_FIELDS if df[c].notna().sum() >= MIN_N_FOR_MODELING]
+    if len(feature_cols) < 3:
+        return None, None, None, f"only {len(feature_cols)} feature(s) have enough non-null data yet - too few dimensions to cluster meaningfully"
+    sub = df[["date"] + feature_cols].dropna(thresh=len(feature_cols) // 2 + 1, subset=feature_cols).copy()
+    if len(sub) < MIN_N_FOR_MODELING:
+        return None, None, None, f"only {len(sub)} rows have enough real (non-imputed-majority) feature coverage - below the {MIN_N_FOR_MODELING}-day floor"
+    X_raw = sub[feature_cols].fillna(sub[feature_cols].median())
+    X = StandardScaler().fit_transform(X_raw)
+    return sub, X, feature_cols, None
+
+
 def regime_analysis(df, k_range=(2, 5)):
     """K-means clustering over standardized daily biometrics to find distinct
     'regimes' (recurring physiological/behavioral states), added 2026-08-01.
@@ -466,20 +593,10 @@ def regime_analysis(df, k_range=(2, 5)):
 
     from sklearn.cluster import KMeans
     from sklearn.metrics import silhouette_score
-    from sklearn.preprocessing import StandardScaler
 
-    # Same median-imputation-after-availability-filter approach as
-    # predictive_modeling() - requiring every feature non-null for every row
-    # would leave near-zero usable rows given Oura's per-field sensor/tier
-    # availability gaps.
-    feature_cols = [c for c in NUMERIC_FIELDS if df[c].notna().sum() >= MIN_N_FOR_MODELING]
-    if len(feature_cols) < 3:
-        return {"note": f"only {len(feature_cols)} feature(s) have enough non-null data yet - too few dimensions to cluster meaningfully"}
-    sub = df[["date"] + feature_cols].dropna(thresh=len(feature_cols) // 2 + 1, subset=feature_cols).copy()
-    if len(sub) < MIN_N_FOR_MODELING:
-        return {"note": f"only {len(sub)} rows have enough real (non-imputed-majority) feature coverage - below the {MIN_N_FOR_MODELING}-day floor"}
-    X_raw = sub[feature_cols].fillna(sub[feature_cols].median())
-    X = StandardScaler().fit_transform(X_raw)
+    sub, X, feature_cols, reason = _prepare_regime_features(df)
+    if sub is None:
+        return {"note": reason}
 
     best_k, best_score, best_labels = None, -1.0, None
     scores_by_k = {}
@@ -543,6 +660,180 @@ def regime_analysis(df, k_range=(2, 5)):
     }
 
 
+def gmm_regime_analysis(df, k_range=(2, 5)):
+    """Gaussian Mixture Model over the same standardized features as
+    regime_analysis() (k-means), added 2026-08-02. GMM is a genuinely
+    different model class from k-means, not a duplicate: it fits soft
+    (probabilistic) cluster assignments with its own per-cluster covariance,
+    so it can find elongated/overlapping regimes k-means' hard spherical
+    clusters would split or merge incorrectly. Component count is chosen via
+    BIC (which already penalizes extra parameters, unlike silhouette) rather
+    than in-sample log-likelihood, which would just keep improving as
+    components are added. Reported alongside k-means' result (not instead of
+    it) so they act as a cross-check on each other - if both methods agree on
+    a similar cluster count and profile, that's a stronger finding than
+    either alone; if they disagree, that's honestly reported as ambiguous
+    structure, not resolved in favor of whichever ran first."""
+    if len(df) < MIN_N_FOR_MODELING:
+        return {"note": f"only {len(df)} days - below the {MIN_N_FOR_MODELING}-day floor this script requires before clustering. Skipping rather than fitting noise."}
+
+    from sklearn.mixture import GaussianMixture
+
+    sub, X, feature_cols, reason = _prepare_regime_features(df)
+    if sub is None:
+        return {"note": reason}
+
+    max_k = min(k_range[1], len(sub) // 5)
+    best_k, best_bic, best_model = None, np.inf, None
+    bic_by_k = {}
+    for k in range(k_range[0], max(k_range[0], max_k) + 1):
+        if k >= len(sub):
+            continue
+        gmm = GaussianMixture(n_components=k, covariance_type="diag", random_state=0, n_init=5)
+        gmm.fit(X)
+        bic = gmm.bic(X)
+        bic_by_k[k] = round(float(bic), 1)
+        if bic < best_bic:
+            best_k, best_bic, best_model = k, bic, gmm
+    if best_model is None:
+        return {"note": "GMM did not converge to any valid component count in range - not enough data structure to find regimes yet"}
+
+    labels = best_model.predict(X)
+    sub = sub.assign(_cluster=labels)
+    cluster_profiles = []
+    for c in sorted(set(labels)):
+        rows = sub[sub["_cluster"] == c]
+        profile_metrics = {m: round(float(rows[m].dropna().mean()), 2) for m in feature_cols if len(rows[m].dropna())}
+        cluster_profiles.append({
+            "component": int(c), "n_days": len(rows),
+            "mean_profile": profile_metrics,
+            "avg_membership_confidence": round(float(best_model.predict_proba(X)[sub["_cluster"] == c][:, c].mean()), 3),
+        })
+
+    return {
+        "n_days_clustered": len(sub),
+        "features_used": feature_cols,
+        "k_chosen_by_bic": best_k,
+        "bic_by_k_tried": bic_by_k,
+        "interpretation_note": (
+            "BIC (lower is better) already penalizes extra components, so k_chosen_by_bic is not just "
+            "'whatever fit best' - but avg_membership_confidence near 1/k_chosen means the model isn't "
+            "confidently separating days into distinct states even though it picked this k; report that "
+            "plainly. Compare cluster_profiles here against regime_analysis's k-means profiles - broad "
+            "agreement between the two methods is a stronger finding than either alone."
+        ),
+        "cluster_profiles": cluster_profiles,
+    }
+
+
+def hmm_regime_analysis(df, k_range=(2, 4), holdout_fraction=0.2):
+    """Hidden Markov Model over the same standardized daily features, added
+    2026-08-02. This is a distinct question from k-means/GMM above: those
+    treat each day as an independent draw from some regime, ignoring day
+    order entirely. An HMM instead models day-to-day regime *persistence* and
+    *transitions* - which is what 'regime' actually implies physiologically
+    (you don't teleport between states day to day, you drift and hold). State
+    count is selected by held-out chronological log-likelihood, not in-sample
+    likelihood or BIC: the model is fit on the first (1 - holdout_fraction)
+    of days in time order and scored on the final holdout_fraction - this is
+    the sequential-data equivalent of cross-validation, and it's what keeps
+    this from just picking the k that memorizes the training window best.
+    A holdout log-likelihood that's far worse than the training
+    log-likelihood (per-day, since window sizes differ) is reported
+    explicitly as an overfitting signal, same discipline as the
+    overfit_gap in predictive_modeling()."""
+    if len(df) < MIN_N_FOR_MODELING:
+        return {"note": f"only {len(df)} days - below the {MIN_N_FOR_MODELING}-day floor this script requires before fitting an HMM. Skipping rather than fitting noise."}
+
+    from hmmlearn.hmm import GaussianHMM
+
+    sub, X, feature_cols, reason = _prepare_regime_features(df)
+    if sub is None:
+        return {"note": reason}
+    # X's row order matches sub's row order (both come straight out of
+    # _prepare_regime_features with no intervening resort), and sub's rows
+    # are already date-ordered because load_daily_frame() sorts df by date
+    # before any of this runs and the dropna/thresh filter above preserves
+    # row order - X is safe to treat as a time series as-is. Just reset the
+    # index for clean iteration below.
+    sub = sub.reset_index(drop=True)
+
+    n = len(sub)
+    split = int(n * (1 - holdout_fraction))
+    if split < MIN_N_FOR_MODELING or (n - split) < MIN_N_PER_GROUP_FOR_TEST:
+        return {"note": f"only {n} days - not enough to hold out a chronological validation window for HMM state selection"}
+    X_train, X_holdout = X[:split], X[split:]
+
+    best_k, best_holdout_ll, best_model = None, -np.inf, None
+    scores_by_k = {}
+    max_k = min(k_range[1], split // 10)
+    for k in range(k_range[0], max(k_range[0], max_k) + 1):
+        try:
+            model = GaussianHMM(n_components=k, covariance_type="diag", n_iter=200, random_state=0)
+            model.fit(X_train)
+            train_ll_per_day = model.score(X_train) / len(X_train)
+            holdout_ll_per_day = model.score(X_holdout) / len(X_holdout)
+        except ValueError:
+            continue
+        scores_by_k[k] = {
+            "train_log_likelihood_per_day": round(float(train_ll_per_day), 3),
+            "holdout_log_likelihood_per_day": round(float(holdout_ll_per_day), 3),
+        }
+        if holdout_ll_per_day > best_holdout_ll:
+            best_k, best_holdout_ll, best_model = k, holdout_ll_per_day, model
+    if best_model is None:
+        return {"note": "HMM did not converge for any state count in range - not enough sequential structure to find regimes yet"}
+
+    # Refit the chosen k on the FULL series (train+holdout) for the actual
+    # reported state sequence/transition matrix - the train/holdout split
+    # above was only for choosing k honestly, not for the final artifact.
+    final_model = GaussianHMM(n_components=best_k, covariance_type="diag", n_iter=200, random_state=0)
+    final_model.fit(X)
+    states = final_model.predict(X)
+    sub = sub.assign(_state=states)
+
+    state_profiles = []
+    for s in sorted(set(states)):
+        rows = sub[sub["_state"] == s]
+        profile_metrics = {m: round(float(rows[m].dropna().mean()), 2) for m in feature_cols if len(rows[m].dropna())}
+        state_profiles.append({"state": int(s), "n_days": len(rows), "mean_profile": profile_metrics})
+
+    timeline = []
+    prev_state, run_start, prev_date = None, None, None
+    for _, row in sub.iterrows():
+        if row["_state"] != prev_state:
+            if prev_state is not None:
+                timeline.append({"state": int(prev_state), "start": run_start, "end": prev_date})
+            prev_state, run_start = row["_state"], row["date"].strftime("%Y-%m-%d")
+        prev_date = row["date"].strftime("%Y-%m-%d")
+    if prev_state is not None:
+        timeline.append({"state": int(prev_state), "start": run_start, "end": prev_date})
+
+    train_ll = scores_by_k[best_k]["train_log_likelihood_per_day"]
+    holdout_ll = scores_by_k[best_k]["holdout_log_likelihood_per_day"]
+    overfit_gap = round(train_ll - holdout_ll, 3)
+
+    return {
+        "n_days_used": n,
+        "features_used": feature_cols,
+        "k_chosen_by_holdout_likelihood": best_k,
+        "per_k_train_vs_holdout_log_likelihood": scores_by_k,
+        "train_vs_holdout_gap_at_chosen_k": overfit_gap,
+        "likely_overfitting": overfit_gap >= OVERFIT_GAP_THRESHOLD,
+        "transition_matrix": [[round(float(p), 3) for p in row] for row in final_model.transmat_],
+        "state_profiles": state_profiles,
+        "state_timeline": timeline,
+        "interpretation_note": (
+            "k was chosen by scoring each candidate on a held-out chronological window, not in-sample "
+            "likelihood - train_vs_holdout_gap_at_chosen_k large/positive means even the honestly-selected "
+            "k is still overfitting the training window; report that plainly rather than presenting the "
+            "transition_matrix/state_profiles as settled. Compare state_timeline against regime_analysis's "
+            "(k-means) and gmm_regime_analysis's cluster timelines - the HMM additionally captures how "
+            "persistent each state is (transition_matrix diagonal), which the other two can't."
+        ),
+    }
+
+
 def main():
     df = load_daily_frame()
     result = {
@@ -570,7 +861,9 @@ def main():
     result["protocol_before_after"] = protocol_before_after(df)
     result["predictive_models"] = predictive_modeling(df)
     result["short_vs_long_term_ranges"] = short_vs_long_term_ranges(df)
-    result["regime_analysis"] = regime_analysis(df)
+    result["regime_analysis_kmeans"] = regime_analysis(df)
+    result["regime_analysis_gmm"] = gmm_regime_analysis(df)
+    result["regime_analysis_hmm"] = hmm_regime_analysis(df)
     print(json.dumps(result, indent=2, default=str))
 
 

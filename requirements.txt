@@ -8,11 +8,19 @@ openpyxl
 pandas
 
 # Required for scripts/oura_analyze.py (/oura-analyze) — correlations,
-# FDR-corrected group comparisons, cross-validated regression/random forest
+# FDR-corrected group comparisons, cross-validated regression/tree ensembles/
+# clustering. xgboost and hmmlearn added 2026-08-02 to widen the model
+# comparison (GMM + HMM regime detection, XGBoost/ExtraTrees regression, a
+# heavily-regularized small MLP gated behind a much higher row-count floor
+# than the other models) — every model still reports a train-vs-CV gap so
+# overfitting surfaces as a number, not a guess; see MIN_N_* constants and
+# each function's own docstring in oura_analyze.py before changing floors.
 numpy
 scipy
 statsmodels
 scikit-learn
+xgboost
+hmmlearn
 pyyaml
 
 # Optional — local fallback transcription (scripts/whisper_transcribe.py) for when

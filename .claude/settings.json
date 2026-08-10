@@ -3,6 +3,31 @@
     "deny": [
       "Edit(.env)",
       "Edit(Sources/Paid/**)"
+    ],
+    "allow": [
+      "mcp__oura__oura_daily_summary",
+      "mcp__oura__oura_stress",
+      "mcp__oura__oura_workouts",
+      "mcp__oura__oura_spo2",
+      "mcp__oura__oura_sessions",
+      "mcp__oura__oura_heart_rate",
+      "mcp__oura__oura_activity",
+      "mcp__oura__oura_sleep",
+      "mcp__oura__oura_readiness",
+      "mcp__oura__oura_trends",
+      "mcp__excel__excel_read_sheet",
+      "mcp__claude-in-chrome__get_page_text",
+      "Bash(defuddle parse *)",
+      "Bash(tasklist *)",
+      "Bash(py-spy dump *)",
+      "Edit(Research/**)",
+      "Write(Research/**)",
+      "Edit(Concepts/**)",
+      "Write(Concepts/**)",
+      "Edit(People/**)",
+      "Write(People/**)",
+      "Edit(Synthesis/Channels/**)",
+      "Write(Synthesis/Channels/**)"
     ]
   },
   "hooks": {

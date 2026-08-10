@@ -1,3 +1,9 @@
+# Dev-tooling config only (ruff lint settings) - NOT a package/dependency
+# manifest. requirements.txt is the actual install path (see README.md
+# Setup). A stray, empty uv.lock previously sat alongside this file with no
+# corresponding [project.dependencies] table for it to lock against -
+# removed 2026-08-08 since it was pure vestigial confusion, not a real
+# alternative install path.
 [tool.ruff]
 target-version = "py311"
 line-length = 110

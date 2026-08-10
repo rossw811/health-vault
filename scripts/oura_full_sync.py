@@ -40,6 +40,7 @@ import argparse
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -80,10 +81,41 @@ def load_token():
 TOKEN = load_token()
 
 
+# Retry-with-backoff added 2026-08-08 per buglog.md's 2026-08-04 entry: a bare
+# api_get had zero retry logic, so a single transient
+# `http.client.RemoteDisconnected` anywhere in a multi-day fetch discarded
+# every already-fetched day for that run (the fetch-then-write-everything
+# structure meant nothing got written until the whole range succeeded).
+# urllib.error.HTTPError (a real 4xx/5xx response) and
+# urllib.error.URLError/socket-level failures (RemoteDisconnected,
+# ConnectionResetError, timeouts - all surface as URLError from urlopen) are
+# handled differently: retry transient network failures and 5xx server
+# errors, but never retry a 4xx client error (bad token, bad request) since
+# retrying that just wastes time on a failure that won't change.
+API_MAX_RETRIES = 4
+API_RETRY_BACKOFF_SECONDS = [2, 5, 15, 30]
+
+
 def api_get(url):
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {TOKEN}"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read())
+    last_exc = None
+    for attempt in range(API_MAX_RETRIES + 1):
+        try:
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {TOKEN}"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code < 500:
+                raise  # client error (401/403/404/...) - retrying won't help
+            last_exc = e
+        except urllib.error.URLError as e:
+            last_exc = e  # covers RemoteDisconnected, ConnectionResetError, timeouts
+
+        if attempt < API_MAX_RETRIES:
+            wait = API_RETRY_BACKOFF_SECONDS[attempt]
+            print(f"  api_get transient failure ({last_exc}), retrying in {wait}s "
+                  f"(attempt {attempt + 1}/{API_MAX_RETRIES})", file=sys.stderr)
+            time.sleep(wait)
+    raise last_exc
 
 
 def api_get_range(endpoint, start, end):
@@ -146,27 +178,36 @@ def fetch_account_info():
 
 def fetch_all(start, end_exclusive):
     """Fetch every endpoint for [start, end_exclusive). Returns a dict of
-    endpoint -> raw records list (or dict for personal_info)."""
+    endpoint -> raw records list (or dict for personal_info).
+
+    Each endpoint is caught independently on BOTH urllib.error.HTTPError (a
+    real 4xx/5xx response, after api_get's own retries are exhausted for 5xx)
+    and urllib.error.URLError (transient network failures like
+    RemoteDisconnected that also survive api_get's retries) - added
+    2026-08-08. Before this, only HTTPError was caught here, so a persistent
+    URLError on any single endpoint crashed fetch_all entirely and discarded
+    every OTHER endpoint's already-successful data for the whole range, not
+    just the one that failed."""
     data = {}
     for ep in DAY_KEYED_ENDPOINTS:
         try:
             data[ep] = api_get_range(ep, start, end_exclusive)
-        except urllib.error.HTTPError as e:
-            print(f"  WARNING: {ep} fetch failed ({e.code}) - treating as no data", file=sys.stderr)
+        except (urllib.error.HTTPError, urllib.error.URLError) as e:
+            print(f"  WARNING: {ep} fetch failed ({e}) - treating as no data this run", file=sys.stderr)
             data[ep] = []
     for ep in MULTI_PER_DAY_ENDPOINTS:
         try:
             data[ep] = api_get_range(ep, start, end_exclusive)
-        except urllib.error.HTTPError as e:
-            print(f"  WARNING: {ep} fetch failed ({e.code}) - treating as no data", file=sys.stderr)
+        except (urllib.error.HTTPError, urllib.error.URLError) as e:
+            print(f"  WARNING: {ep} fetch failed ({e}) - treating as no data this run", file=sys.stderr)
             data[ep] = []
     try:
         data["rest_mode_period"] = api_get_range("rest_mode_period", start, end_exclusive)
-    except urllib.error.HTTPError:
+    except (urllib.error.HTTPError, urllib.error.URLError):
         data["rest_mode_period"] = []
     try:
         data["enhanced_tag"] = api_get_range("enhanced_tag", start, end_exclusive)
-    except urllib.error.HTTPError:
+    except (urllib.error.HTTPError, urllib.error.URLError):
         data["enhanced_tag"] = []
 
     # Continuous heart rate stream - bucket each sample by its own timestamp's day.
@@ -174,8 +215,8 @@ def fetch_all(start, end_exclusive):
     end_dt = f"{end_exclusive}T00:00:00+00:00"
     try:
         hr_samples = api_get_heartrate(start_dt, end_dt)
-    except urllib.error.HTTPError as e:
-        print(f"  WARNING: heartrate fetch failed ({e.code})", file=sys.stderr)
+    except (urllib.error.HTTPError, urllib.error.URLError) as e:
+        print(f"  WARNING: heartrate fetch failed ({e}) - treating as no data this run", file=sys.stderr)
         hr_samples = []
     hr_by_day = {}
     for s in hr_samples:

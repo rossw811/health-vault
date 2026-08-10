@@ -170,12 +170,7 @@ def extract_video_id(url: str) -> str | None:
 
 
 def fetch_metadata(video_id: str) -> dict:
-    fields = ["title", "channel", "upload_date", "duration_string", "view_count", "like_count"]
     result = subprocess.run(
-        ["yt-dlp", "--skip-download"] + sum([["--print", f] for f in fields], []),
-        f"https://www.youtube.com/watch?v={video_id}",
-        capture_output=True, text=True,
-    ) if False else subprocess.run(
         ["yt-dlp", "--skip-download",
          "--print", "title", "--print", "channel", "--print", "upload_date",
          "--print", "duration_string", "--print", "view_count", "--print", "like_count",
@@ -347,10 +342,15 @@ def main() -> int:
                               "2026-07-25 once podcast_collector.py started running as a second concurrent "
                               "scheduled task on the same 12-core machine; 4+4 workers oversubscribed the "
                               "machine (24 threads for 12 cores) and measurably slowed both down.")
-    parser.add_argument("--model", default="small", help="faster-whisper model size")
-    parser.add_argument("--cpu-threads", type=int, default=3,
+    parser.add_argument("--model", default="small", help="whisper.cpp model size")
+    parser.add_argument("--cpu-threads", type=int, default=4,
                          help="CPU threads per worker's Whisper model - keep (parallel * cpu-threads, summed "
-                              "across every collector that might run at the same time) near your core count")
+                              "across every collector that might run at the same time) near your core count. "
+                              "Default 4 as of 2026-08-08 (was 3) - the actual 2026-07-27 controlled sweep found "
+                              "4 threads/process is the true optimum under two-collector contention (see "
+                              "CLAUDE.md), and both wrapper scripts already pass --cpu-threads 4 explicitly; "
+                              "this bare default only mattered for a manual invocation outside the wrappers, "
+                              "which was silently using the stale pre-sweep value.")
     args = parser.parse_args()
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -469,7 +469,7 @@ def _build_worklist(collected: dict) -> list[str]:
     return deduped
 
 
-def _run(parallel: int = 4, model_size: str = "small", cpu_threads: int = 3) -> int:
+def _run(parallel: int = 2, model_size: str = "small", cpu_threads: int = 4) -> int:
     collected = load_json(COLLECTED_IDS_FILE, {})
     video_ids = _build_worklist(collected)
     print(f"{len(video_ids)} new video(s) to process, {parallel} parallel worker(s).")

@@ -206,8 +206,10 @@ def main() -> int:
     parser.add_argument("video", help="YouTube video ID or full URL")
     parser.add_argument(
         "--model", default="small",
-        help="faster-whisper model size (tiny/base/small/medium/large-v3). "
-             "Default 'small' balances speed and accuracy on CPU.",
+        help="whisper.cpp model size - only 'small' is currently downloaded/supported "
+             "(see WHISPER_CPP_MODELS). Corrected 2026-08-08 - this used to list "
+             "faster-whisper's tiny/base/small/medium/large-v3 options, stale since the "
+             "2026-07-27 engine swap to whisper.cpp.",
     )
     parser.add_argument(
         "--keep-audio", action="store_true",

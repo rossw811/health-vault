@@ -172,8 +172,20 @@ def download_audio_direct(audio_url: str, dest_dir: Path) -> Path:
     dest_path = dest_dir / f"episode{ext}"
     req = urllib.request.Request(audio_url, headers={"User-Agent": USER_AGENT})
     try:
+        # Stream in 1MB chunks instead of resp.read() - added 2026-08-08. A
+        # podcast episode can be 50-200MB; reading the whole body into memory
+        # before writing (the prior behavior) meant up to --parallel
+        # concurrent workers could each be holding a full episode in RAM at
+        # once, on top of their own loaded Whisper model - a plausible
+        # undiagnosed contributor to this vault's documented OOM incidents
+        # (buglog.md, 2026-07-25) even though it wasn't confirmed as the
+        # direct trigger of any specific one.
         with urllib.request.urlopen(req, timeout=180) as resp, open(dest_path, "wb") as f:
-            f.write(resp.read())
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
     except urllib.error.URLError as exc:
         raise RuntimeError(f"podcast audio download failed: {exc}") from exc
     return dest_path
@@ -244,7 +256,9 @@ def main() -> int:
                               "time as two separate scheduled tasks on the same machine - 4+4 workers "
                               "oversubscribed a 12-core machine (24 threads) and measurably slowed both down.")
     parser.add_argument("--model", default="small")
-    parser.add_argument("--cpu-threads", type=int, default=3)
+    parser.add_argument("--cpu-threads", type=int, default=4,
+                         help="Default 4 as of 2026-08-08 (was 3) - matches the 2026-07-27 controlled-sweep "
+                              "optimum (see CLAUDE.md) that both wrapper scripts already pass explicitly.")
     args = parser.parse_args()
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -298,7 +312,7 @@ def _build_worklist(collected: dict) -> list[dict]:
     return episodes
 
 
-def _run(parallel: int = 4, model_size: str = "small", cpu_threads: int = 3) -> int:
+def _run(parallel: int = 2, model_size: str = "small", cpu_threads: int = 4) -> int:
     collected = load_json(COLLECTED_IDS_FILE, {})
     episodes = _build_worklist(collected)
     print(f"{len(episodes)} new episode(s) to process, {parallel} parallel worker(s).")

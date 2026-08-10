@@ -18,7 +18,24 @@ Set-Location "C:\Users\RossW\Projects\Health"
 $logFile      = "C:\Users\RossW\Projects\Health\Logs\youtube-queue-loop.log"
 $maxAttempts  = 50
 $pauseSeconds = 15
-$ffmpegDir    = "C:\Users\RossW\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.2-full_build\bin"
+
+# Version-agnostic ffmpeg lookup, added 2026-08-08 (was a version-pinned path
+# to ffmpeg-8.1.2-full_build - a winget auto-update to a newer ffmpeg version
+# changes that folder name and silently breaks PATH injection here, with
+# nothing surfacing the failure until a run needs ffmpeg and can't find it).
+# Falls back to the last-known pinned path if no match is found, so an
+# already-working machine doesn't regress if the winget package layout ever
+# changes shape entirely.
+$ffmpegPackageRoot = "C:\Users\RossW\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
+$ffmpegDir = $null
+if (Test-Path $ffmpegPackageRoot) {
+    $latest = Get-ChildItem $ffmpegPackageRoot -Directory -Filter "ffmpeg-*" -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+    if ($latest) { $ffmpegDir = Join-Path $latest.FullName "bin" }
+}
+if (-not $ffmpegDir -or -not (Test-Path $ffmpegDir)) {
+    $ffmpegDir = "C:\Users\RossW\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.2-full_build\bin"
+}
 
 $env:PATH = "$ffmpegDir;$env:PATH"
 $env:KMP_DUPLICATE_LIB_OK = "TRUE"

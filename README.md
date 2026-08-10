@@ -92,6 +92,8 @@ All defined in `.claude/commands/`. Full behavior documented in `CLAUDE.md`.
 | `/storm-panel [question]` | Multi-perspective grounded synthesis panel over the vault's own sources |
 | `/concept-audit [concept \| "all"]` | Adversarially critique concepts — weak claims, verified against actual studies via `/research --academic`, plus online sentiment |
 | `/concept-connect [concept \| topic]` | Map how a concept connects to everything else in the vault; surface branch-out (adjacent uncovered topics) and deep-dive (thin/single-source concepts) directions |
+| `/person-views [person \| "all"]` | Backfill a person's "Views & Claims" — what they stated as fact vs. opinion vs. reasoning, per subject, sourced from citing video/podcast notes |
+| `/optimize-target [target]` | Build/refresh a per-marker or per-body-system optimization plan — evidence-tiered levers, measurement plan, and interactions with other targets |
 | `/vault-update` | Update the local tool stack and refresh all tracked YouTube channels for new videos |
 
 ## Automation

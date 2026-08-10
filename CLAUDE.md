@@ -8,7 +8,7 @@ Before declaring any script, command, or automation fixed/working, actually run 
 
 ## Repo scope — tooling only, content never leaves this machine
 
-This git repo (private, github.com/rossw811/health-vault) tracks **only the generic tooling**: `.claude/commands/`, `.claude/settings.json`, `.mcp.json`, `scripts/`, `.gitignore`, `.env.example`, `CLAUDE.md`, `_CLAUDE.md`, `README.md`, `CONTRIBUTIONS.md` (2026-07-27 — the modularity/customization guide: how to swap the biometric source, transcription engine, ingestion mechanics, or domain focus). Every actual content folder/file below is gitignored and stays local-only — never commit or suggest committing them, even accidentally via a broad `git add`. If a new top-level content file/folder is created, add it to `.gitignore` immediately, don't wait for the next cleanup pass.
+This git repo (public, github.com/rossw811/health-vault — confirmed 2026-08-08, corrected from a prior "private" claim here that no longer matched reality; kept public deliberately since the repo scope below already excludes all personal content) tracks **only the generic tooling**: `.claude/commands/`, `.claude/settings.json`, `.mcp.json`, `scripts/`, `.gitignore`, `.env.example`, `CLAUDE.md`, `_CLAUDE.md`, `README.md`, `CONTRIBUTIONS.md` (2026-07-27 — the modularity/customization guide: how to swap the biometric source, transcription engine, ingestion mechanics, or domain focus). Every actual content folder/file below is gitignored and stays local-only — never commit or suggest committing them, even accidentally via a broad `git add`. If a new top-level content file/folder is created, add it to `.gitignore` immediately, don't wait for the next cleanup pass.
 
 ## Layout
 
@@ -69,6 +69,22 @@ This git repo (private, github.com/rossw811/health-vault) tracks **only the gene
 - **Claim verification**: every critical finding gets checked against actual studies via `/research --academic` (scholarly sources only) — not just "is this backed," but the study's own sample size, methodology shortcomings, and whether its result actually generalizes to the vault's claim. Tagged Verified/Contradicted/Inconclusive. **Recency matters here** — when studies conflict, a newer study should generally be weighted over an older one (better methodology, larger samples, corrected priors are the norm over time), and older evidence superseded by more recent findings should be flagged as outdated rather than cited at equal weight. This is the opposite of the YouTube-channel exclusion policy below (age is irrelevant there) — the two are unrelated: a channel's upload date says nothing about a video's content quality, but a study's publication date is directly informative about how much the evidence base has moved since.
 - **Online sentiment**: the `last30days` skill checks current Reddit/HN/X/YouTube discourse on the concept — directional color on whether it's broadly accepted, actively debated, or quietly debunked since ingestion. Never overrides the study-level verification.
 - Output: full report to `Synthesis/Critiques/`, critical findings flagged inline on the audited note via a `[!warning]` callout.
+
+## Note architecture — connected, not duplicated
+
+Extends the existing `Optimization/` discipline ("levers link their `Concepts/` note and never restate the mechanism") to the rest of the vault's layered documents, formalized 2026-08-08. Three layers, each with one job:
+- **Schedule/Roadmap** (`Protocols/Master Schedule.md`, `Optimization/Roadmap - 2026-27 Academic Year.md`) — *when* and *which phase*. Links to the Protocol/Workout doc for the actual content; never inlines it.
+- **Protocol/Workout doc** — the actual how-to (sets/reps, meal plan, injection schedule). Links to a Concept for *why*; never re-explains mechanism.
+- **Concept** (`Concepts/`) — the mechanism/evidence. Written once, linked from everywhere it's relevant.
+If the same explanatory paragraph starts appearing in two documents, that's a sign it belongs in a Concept note instead, not that it needs updating in two places.
+
+## Source quality — scientificsean.wiki and other crowdsourced compound databases
+
+`scientificsean.wiki` (added 2026-08-08) is a crowdsourced nootropic/peptide/longevity wiki run by an independent researcher — not a credentialed professional — that explicitly mixes user-reported anecdotes with citations rather than being peer-reviewed itself. Treat it the same way the Ben Winney guide is treated: a **candidate-discovery index** (a place to find compound leads and their claimed citations), never a citation-tier source on its own. Every claim pulled from it goes through the same independent verification via `/research --academic` the vault already applies everywhere else before being written into a note as fact. Tag sourced content `source: scientificsean-wiki` with a `verified: yes/no` flag so an unverified lead never silently reads as settled.
+
+## Source quality — international studies (Russia, China, etc.) are in scope, with mandatory conflict/replication framing
+
+Standing policy as of 2026-08-08, generalizing what the Khavinson bioregulator class review already did in practice: studies from any country are legitimate evidence and should not be excluded on national-origin grounds alone. Every one gets the same treatment the Khavinson review modeled — flag single-institute/single-source origin, unblinded design, financial conflicts of interest (e.g. a researcher personally selling the compound studied), and **absence of independent replication outside the origin country/lab** explicitly, rather than either dismissing the study outright or citing it at face value. A study's national origin is not itself a quality signal in either direction; the actual methodology and independence-of-replication are what matter, and both get stated plainly.
 
 ## Source quality — permanent exclusion for sparse channels only
 

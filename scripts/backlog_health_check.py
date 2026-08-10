@@ -14,10 +14,13 @@ exact bug class can't silently recur and require another manual discovery.
 Usage:
     python scripts/backlog_health_check.py [--threshold 10]
 
-Designed to run periodically via a scheduled task (see
-scripts/run-backlog-health-check.cmd or equivalent registration) - takes a
-while (one yt-dlp call per checked channel) so isn't run every hour like
-reap_orphans.ps1, more like daily/weekly alongside vault-update.
+Designed to run periodically via a scheduled task - registered directly as
+HealthVault-BacklogHealthCheck, invoking this script's full path via
+python.exe directly (no .cmd wrapper - confirmed 2026-08-08, corrected this
+docstring which previously referenced a run-backlog-health-check.cmd that
+was never created). Takes a while (one yt-dlp call per checked channel) so
+isn't run every hour like reap_orphans.ps1, more like daily/weekly alongside
+vault-update.
 """
 
 from __future__ import annotations

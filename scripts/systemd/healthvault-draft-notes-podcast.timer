@@ -1,0 +1,9 @@
+[Unit]
+Description=Run healthvault-draft-notes-podcast every 30 minutes, offset from the youtube timer
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=timers.target

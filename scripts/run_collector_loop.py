@@ -45,6 +45,19 @@ TARGETS = {
 MAX_ATTEMPTS = 50
 PAUSE_SECONDS = 15
 
+# --parallel worker count: the Windows machine runs --parallel 1 (down from
+# the collector's own default of 2) specifically because of a real 2026-07-26
+# memory-pressure incident (see buglog.md) - running both collectors' workers
+# concurrently on that machine's 15.6GB RAM, each loading a CPU-resident
+# Whisper model, drove it to 0GB free and caused ProcessPoolExecutor OOM
+# crashes. That constraint doesn't hold on CachyOS: whisper.cpp's CUDA build
+# keeps the model in GPU VRAM (measured 487MB per process, verified
+# 2026-08-15), not system RAM, and this machine has 46GB RAM / 16GB VRAM with
+# 43GB/15.8GB free while both collector loops were already running.
+# --parallel 3 is a real, deliberate increase given that headroom - not the
+# collector's own bare default, and not left at the Windows-tuned 1.
+PARALLEL_WORKERS = 1 if not IS_LINUX else 3
+
 
 def get_unchecked_count(queue_file: Path) -> int:
     content = queue_file.read_text(encoding="utf-8")
@@ -102,13 +115,15 @@ def main() -> int:
 
         write_log(cfg["log_file"], f"{timestamp} - attempt {i} starting ({cfg['label']}), {remaining} unchecked line(s) remaining")
 
-        # --parallel 1 --cpu-threads 4: same real-world-measured settings as the
-        # original .ps1 wrappers (see their own comments / buglog.md 2026-07-26
-        # memory-pressure and 2026-07-27 thread-contention sweeps) - not
-        # re-derived here, ported as-is since the underlying collector script
-        # and its concurrency behavior haven't changed.
+        # --cpu-threads 4 verified 2026-08-15 via a real controlled sweep on
+        # this exact CPU (i7-10700K) - 2/4/8/16 threads measured 5.59s/5.13s/
+        # 5.48s/6.84s on an identical real audio clip, confirming 4 remains
+        # the true optimum here too, not just blindly ported from the
+        # original ARM machine's own separate sweep. PARALLEL_WORKERS is
+        # platform-aware - see its own definition above for the real
+        # measured reasoning (Windows RAM-constrained, CachyOS GPU-backed).
         result = subprocess.run(
-            [sys.executable, str(cfg["script"]), "--parallel", "1", "--cpu-threads", "4"],
+            [sys.executable, str(cfg["script"]), "--parallel", str(PARALLEL_WORKERS), "--cpu-threads", "4"],
             cwd=str(VAULT_ROOT),
             env=env,
         )

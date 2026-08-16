@@ -60,7 +60,23 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 
 
 def _pid_is_running(pid: int) -> bool:
-    """Windows has no os.kill(pid, 0) liveness check - shell out to tasklist."""
+    """Windows has no os.kill(pid, 0) liveness check - shell out to tasklist.
+    POSIX (Linux, added 2026-08-15 for the CachyOS side - see
+    NEW-MACHINE-SETUP.md) has a real portable liveness check via signal 0:
+    it doesn't actually send a signal, just checks permissions/existence,
+    raising ProcessLookupError if the PID is gone and PermissionError if it's
+    alive but owned by another user (still "running" for this check's
+    purpose, so both are handled explicitly rather than falling through to
+    a bare except)."""
+    if sys.platform != "win32":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        else:
+            return True
     result = subprocess.run(
         ["tasklist", "/FI", f"PID eq {pid}"],
         capture_output=True, text=True,

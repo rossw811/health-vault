@@ -59,6 +59,18 @@ USER_AGENT = "Mozilla/5.0 (compatible; HealthVaultPodcastCollector/1.0)"
 
 
 def _pid_is_running(pid: int) -> bool:
+    """See the identical fix + rationale in collect_raw_transcripts.py's own
+    _pid_is_running (added 2026-08-15 for the CachyOS side) - POSIX has a
+    real portable liveness check via os.kill(pid, 0), Windows doesn't."""
+    if sys.platform != "win32":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        else:
+            return True
     result = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True)
     return str(pid) in result.stdout
 

@@ -48,7 +48,7 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-VAULT_ROOT = Path("C:/Users/RossW/Projects/Health")
+VAULT_ROOT = Path(__file__).resolve().parent.parent  # portable — see NEW-MACHINE-SETUP.md, 2026-08-15
 QUEUE_FILE = VAULT_ROOT / "Podcast Queue.md"
 RAW_DIR = VAULT_ROOT / "Research" / "Podcasts" / "Raw"
 COLLECTED_IDS_FILE = RAW_DIR / ".collected_ids.json"

@@ -37,6 +37,12 @@ ruff
 pandera
 polars
 
+# Linux-side process management (scripts/reap_orphans.py, scripts/stop_collectors.py) —
+# added 2026-08-15 as part of the two-machine migration. The Windows .ps1
+# equivalents use Get-CimInstance Win32_Process directly and stay as-is; these
+# Python ports are for the CachyOS side, which has no PowerShell.
+psutil
+
 # Occasional use only — history maintenance (see README "History rewrites").
 # Not needed for normal operation; install on demand when actually rewriting git history.
 # git-filter-repo

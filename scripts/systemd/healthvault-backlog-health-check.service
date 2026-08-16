@@ -1,0 +1,7 @@
+[Unit]
+Description=Health Vault YouTube backlog health check (audits checked-off channel lines against real video counts)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Health
+ExecStart=%h/Health/.venv/bin/python %h/Health/scripts/backlog_health_check.py --threshold 10

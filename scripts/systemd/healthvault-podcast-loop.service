@@ -1,0 +1,12 @@
+[Unit]
+Description=Health Vault podcast collector loop (zero-Claude-cost)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Health
+ExecStart=%h/Health/.venv/bin/python %h/Health/scripts/run_collector_loop.py podcast
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

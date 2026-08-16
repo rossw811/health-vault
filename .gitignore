@@ -41,6 +41,14 @@ __pycache__/
 # Machine/vault-local, not generic tooling. Whole folder excluded.
 .obsidian/
 
+# Syncthing — machine-local sync metadata and conflict artifacts, added
+# 2026-08-15 (two-machine migration, see NEW-MACHINE-SETUP.md). .stignore
+# itself IS tracked (it's config, same tier as .gitignore) — only the
+# generated/internal pieces are excluded here.
+.stfolder/
+.stversions/
+*.sync-conflict-*
+
 # Local RAG / semantic search caches
 .rag-cache/
 .embeddings/

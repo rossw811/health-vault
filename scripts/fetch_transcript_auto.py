@@ -23,7 +23,29 @@ import subprocess
 import sys
 from pathlib import Path
 
-SKILL_ROOT = "C:/Users/RossW/.claude/plugins/cache/obsidian-second-brain/obsidian-second-brain/0.14.0"
+
+def find_skill_root() -> str:
+    """Version-agnostic obsidian-second-brain plugin cache lookup, added
+    2026-08-15 as part of the two-machine migration (see NEW-MACHINE-SETUP.md) -
+    same pattern already proven for the ffmpeg winget-folder lookup in
+    run-youtube-queue-loop.ps1 (2026-08-08 fix, see buglog.md): a hardcoded
+    version-pinned path silently breaks on any plugin/package update, so scan
+    for the actual installed version directory instead of assuming one. Uses
+    Path.home() rather than a hardcoded OS-specific root so this resolves
+    correctly on both this vault's Windows and CachyOS machines."""
+    cache_root = Path.home() / ".claude" / "plugins" / "cache" / "obsidian-second-brain" / "obsidian-second-brain"
+    if cache_root.exists():
+        versions = sorted(cache_root.glob("*"), key=lambda p: p.name, reverse=True)
+        if versions:
+            return str(versions[0])
+    # Last-known-good fallback if no version directory is found at all -
+    # keeps this from hard-failing on a machine where the plugin cache
+    # hasn't been populated yet, even though callers should expect this to
+    # fail loudly downstream in that case (no directory to run uv against).
+    return str(cache_root / "0.14.0")
+
+
+SKILL_ROOT = find_skill_root()
 
 BLOCKED_SIGNATURES = ("IpBlocked", "RequestBlocked", "429", "Too Many Requests")
 

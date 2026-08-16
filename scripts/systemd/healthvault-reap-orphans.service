@@ -1,0 +1,7 @@
+[Unit]
+Description=Health Vault orphaned collector-worker reaper (safe, non-disruptive)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Health
+ExecStart=%h/Health/.venv/bin/python %h/Health/scripts/reap_orphans.py

@@ -31,7 +31,7 @@ import re
 import subprocess
 from pathlib import Path
 
-VAULT_ROOT = Path("C:/Users/RossW/Projects/Health")
+VAULT_ROOT = Path(__file__).resolve().parent.parent  # portable — see NEW-MACHINE-SETUP.md, 2026-08-15
 QUEUE_FILE = VAULT_ROOT / "YouTube Queue.md"
 COLLECTED_IDS_FILE = VAULT_ROOT / "Research" / "YouTube" / "Raw" / ".collected_ids.json"
 LOG_FILE = VAULT_ROOT / "Logs" / "backlog-health-check.log"

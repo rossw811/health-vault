@@ -1,0 +1,41 @@
+// Syncthing's own ignore file — separate from .gitignore. Rewritten 2026-08-15
+// after a real sync conflict: the first version only excluded .git itself,
+// which left Syncthing ALSO managing every git-tracked working-tree file
+// (scripts/, CLAUDE.md, README.md, etc.) alongside git's own push/pull — two
+// systems both trying to own the same files, and a genuine conflict
+// (.sync-conflict-*.gitignore) showed up almost immediately from the two
+// machines' git clones having different line-ending normalization.
+//
+// Correct division of ownership: git owns everything it tracks (push/pull is
+// the sync mechanism there — see NEW-MACHINE-SETUP.md). Syncthing owns only
+// what git deliberately excludes (see .gitignore) — the real vault content.
+// This list is the inverse of .gitignore's content list: only these paths
+// are synced, everything else is ignored by Syncthing (owned by git instead).
+!Sources
+!Concepts
+!Protocols
+!Daily
+!Synthesis
+!Research
+!Logs
+!Bases
+!People
+!Dashboard
+!Bloodwork
+!Optimization
+!YouTube Queue.md
+!Podcast Queue.md
+!wiki
+!index.md
+!log.md
+!development.md
+!buglog.md
+!ideas.md
+!.env
+!.env.*
+!*.token
+!*credentials*.json
+!*.docx
+!*.canvas
+!tmp_transcripts
+*

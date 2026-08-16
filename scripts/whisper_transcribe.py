@@ -17,11 +17,14 @@ Prints the transcript to stdout. Cleans up the downloaded audio file when done
 from __future__ import annotations
 
 import argparse
+import platform
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+IS_LINUX = platform.system() == "Linux"
 
 
 def find_ffmpeg_dir() -> str | None:
@@ -32,12 +35,16 @@ def find_ffmpeg_dir() -> str | None:
     failure mode that rule was written for: ffmpeg installed via winget resolved
     fine in an interactive shell but not in the actual scheduled-task process,
     so yt-dlp's internal ffmpeg call silently failed there). Check PATH first
-    (works once/if it's ever fixed system-wide), then fall back to scanning the
-    winget install location directly.
+    (works once/if it's ever fixed system-wide, and is the normal case on Linux
+    where ffmpeg is a system package rather than a per-user winget install),
+    then fall back to scanning the winget install location directly - that
+    fallback is a Windows-only concept, a no-op on Linux.
     """
     found = shutil.which("ffmpeg")
     if found:
         return str(Path(found).parent)
+    if IS_LINUX:
+        return None
     winget_packages = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
     if winget_packages.exists():
         matches = list(winget_packages.glob("*FFmpeg*/**/ffmpeg.exe"))
@@ -124,8 +131,28 @@ def download_audio(video_id_or_url: str, dest_dir: Path) -> Path:
 # accurate (93-94% similarity, with real dropped clauses like "and then to
 # practice not eating, which they call fasting" vanishing entirely) - not
 # deployed. See buglog.md for the complete comparison.
-WHISPER_CPP_DIR = Path.home() / "AppData" / "Local" / "HealthVault-Tools" / "whisper-cpp"
-WHISPER_CPP_BIN = WHISPER_CPP_DIR / "build-arm64-windows-llvm-release" / "bin" / "whisper-cli.exe"
+#
+# CachyOS/Linux CUDA build added 2026-08-15 as part of the two-machine
+# migration (see NEW-MACHINE-SETUP.md) - a fresh Linux+CUDA build via CMake
+# (-DGGML_CUDA=1), not a port of the Windows ARM64 binary. A/B tested against
+# this same Windows CPU build on an identical real ~3min audio clip: 22.5x
+# faster (3.1s vs 69.6s) with only cosmetic transcript differences ("100
+# times" vs "a hundred times" - the same tier of ASR variance already judged
+# acceptable in the original CTranslate2-vs-whisper.cpp comparison above, not
+# a quality regression). The CUDA build's shared libraries (libggml-cuda.so
+# etc.) live alongside the binary rather than being installed system-wide, so
+# LD_LIBRARY_PATH must be set explicitly for the subprocess call - Linux has
+# no equivalent of Windows' same-directory DLL search by default.
+WHISPER_CPP_DIR = (
+    Path.home() / ".local" / "share" / "HealthVault-Tools" / "whisper-cpp"
+    if IS_LINUX
+    else Path.home() / "AppData" / "Local" / "HealthVault-Tools" / "whisper-cpp"
+)
+WHISPER_CPP_BIN = (
+    WHISPER_CPP_DIR / "bin" / "whisper-cli"
+    if IS_LINUX
+    else WHISPER_CPP_DIR / "build-arm64-windows-llvm-release" / "bin" / "whisper-cli.exe"
+)
 WHISPER_CPP_MODELS = {"small": WHISPER_CPP_DIR / "models" / "ggml-small.bin"}
 
 
@@ -177,7 +204,13 @@ def transcribe(audio_path: Path, model_size: str = "small", batched_model=None, 
             "-otxt",
             "-of", out_prefix,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        env = None
+        if IS_LINUX:
+            import os
+            env = os.environ.copy()
+            lib_dir = str(WHISPER_CPP_BIN.parent)
+            env["LD_LIBRARY_PATH"] = lib_dir + ":" + env.get("LD_LIBRARY_PATH", "")
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             raise RuntimeError(f"whisper.cpp transcription failed: {result.stderr.strip()}")
         out_file = Path(out_prefix + ".txt")

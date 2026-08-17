@@ -73,7 +73,7 @@ This git repo (public, github.com/rossw811/health-vault — confirmed 2026-08-08
 ## Note architecture — connected, not duplicated
 
 Extends the existing `Optimization/` discipline ("levers link their `Concepts/` note and never restate the mechanism") to the rest of the vault's layered documents, formalized 2026-08-08. Three layers, each with one job:
-- **Schedule/Roadmap** (`Protocols/Master Schedule.md`, `Optimization/Roadmap - 2026-27 Academic Year.md`) — *when* and *which phase*. Links to the Protocol/Workout doc for the actual content; never inlines it.
+- **Schedule/Roadmap** (`Protocols/Master Daily Optimization Plan.md` — canonical since 2026-08-16, `Protocols/Master Schedule.md` is now a superseded redirect stub — plus `Optimization/Roadmap - 2026-27 Academic Year.md`) — *when* and *which phase*. Links to the Protocol/Workout doc for the actual content; never inlines it.
 - **Protocol/Workout doc** — the actual how-to (sets/reps, meal plan, injection schedule). Links to a Concept for *why*; never re-explains mechanism.
 - **Concept** (`Concepts/`) — the mechanism/evidence. Written once, linked from everywhere it's relevant.
 If the same explanatory paragraph starts appearing in two documents, that's a sign it belongs in a Concept note instead, not that it needs updating in two places.

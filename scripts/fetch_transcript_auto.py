@@ -49,6 +49,35 @@ SKILL_ROOT = find_skill_root()
 
 BLOCKED_SIGNATURES = ("IpBlocked", "RequestBlocked", "429", "Too Many Requests")
 
+# Real fix 2026-08-19: an anonymous (unauthenticated) request is far more
+# rate-limit-prone than one attributable to a real logged-in account -
+# confirmed live (Ross's own Firefox "HealthVaultYT" profile cookies let a
+# yt-dlp request through cleanly while anonymous requests were 429/IpBlocked
+# at the same moment). youtube-transcript-api takes an `http_client` (a
+# requests.Session), not a cookies-file path directly, so cookies.txt
+# (Netscape format, the same file yt-dlp's --cookies flag also uses) gets
+# loaded into a Session via MozillaCookieJar and shared across every call.
+COOKIES_FILE = Path.home() / "Health" / ".youtube_cookies.txt"
+
+
+def _cookie_authenticated_session():
+    """Returns a requests.Session with cookies loaded from COOKIES_FILE if it
+    exists, otherwise a plain anonymous Session (graceful degradation - this
+    machine's cookie file might not exist yet, or might expire/need
+    refreshing; anonymous requests still work, just more rate-limit-prone)."""
+    import http.cookiejar
+    import requests
+
+    session = requests.Session()
+    if COOKIES_FILE.exists():
+        jar = http.cookiejar.MozillaCookieJar(str(COOKIES_FILE))
+        try:
+            jar.load(ignore_discard=True, ignore_expires=True)
+            session.cookies = jar
+        except Exception:  # noqa: BLE001 - a malformed/expired cookie file shouldn't crash the collector, just fall back to anonymous
+            pass
+    return session
+
 
 def extract_video_id(video_id_or_url: str) -> str:
     if not video_id_or_url.startswith("http"):
@@ -60,41 +89,47 @@ def extract_video_id(video_id_or_url: str) -> str:
 
 
 def try_official_captions(video_id: str) -> tuple[str | None, str]:
-    """Returns (transcript_or_None, diagnostic_message)."""
-    script = (
-        "import sys\n"
-        "sys.path.insert(0, '.')\n"
-        "from scripts.research.lib.youtube import get_transcript\n"
-        "result = get_transcript(sys.argv[1])\n"
-        "sys.stdout.buffer.write((result or '').encode('utf-8'))\n"
-    )
-    import os
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
-    result = subprocess.run(
-        ["uv", "run", "--directory", SKILL_ROOT, "python", "-c", script, video_id],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
-    )
-    output = result.stdout.strip()
-    diagnostics = result.stderr.strip()
+    """Returns (transcript_or_None, diagnostic_message).
 
-    # BUG (found 2026-07-25): get_transcript() doesn't raise or return empty on
-    # failure - it returns the error itself as a non-empty descriptive string
-    # (e.g. "[YouTube transcript unavailable: IpBlocked: ...]"). The old check
-    # here was just `if output:`, which happily accepted that error text as a
-    # "successful" transcript and saved it to disk as if it were real content.
-    # Must explicitly check the output ITSELF for failure signatures first.
-    is_error_wrapped = output.startswith("[YouTube transcript unavailable") or any(
-        sig in output for sig in BLOCKED_SIGNATURES
-    )
+    Real incident 2026-08-19 (CachyOS migration gap): this used to shell out
+    via `uv run --directory SKILL_ROOT` into the obsidian-second-brain
+    plugin's own youtube.py library - but that plugin was NEVER installed on
+    the CachyOS machine (only on Windows), so SKILL_ROOT pointed at a
+    directory that doesn't exist there. Every single video on CachyOS was
+    silently forced through the much heavier whisper-fallback path (audio
+    download + local transcription) since the 2026-08-15 migration - not
+    because captions were unavailable, but because the lookup mechanism
+    itself was broken. Confirmed via a live test: `find_skill_root()`
+    resolved to a nonexistent path, causing an immediate "No such file or
+    directory" failure on every call.
 
-    if output and not is_error_wrapped:
-        return output, "official captions"
+    Fixed by calling the `youtube-transcript-api` library directly (pip
+    package, installed 2026-08-19 into this vault's own .venv) instead of
+    routing through an external plugin's cache via a cross-process `uv run`
+    call - removes an unnecessary fragile indirection (one less moving part:
+    no dependency on a plugin cache existing, no cross-process subprocess
+    call for what's fundamentally a library import) and works identically on
+    both the Windows and CachyOS machines without any plugin-installation
+    prerequisite. Same public signature and BLOCKED_SIGNATURES-based
+    diagnostic-message convention preserved so callers (and their 429/
+    IpBlocked detection logic) don't need to change."""
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import CouldNotRetrieveTranscript
 
-    combined = output + diagnostics
-    if any(sig in combined for sig in BLOCKED_SIGNATURES):
-        return None, f"blocked ({combined[:200]})"
-    return None, f"no captions available ({combined[:200] or 'empty result'})"
+    try:
+        api = YouTubeTranscriptApi(http_client=_cookie_authenticated_session())
+        fetched = api.fetch(video_id)
+        text = " ".join(segment.text for segment in fetched)
+        if text.strip():
+            return text, "official captions"
+        return None, "no captions available (empty transcript)"
+    except CouldNotRetrieveTranscript as exc:
+        msg = str(exc)
+        if any(sig in msg for sig in BLOCKED_SIGNATURES) or type(exc).__name__ in BLOCKED_SIGNATURES:
+            return None, f"blocked ({type(exc).__name__}: {msg[:200]})"
+        return None, f"no captions available ({type(exc).__name__}: {msg[:200]})"
+    except Exception as exc:  # noqa: BLE001 - report any unexpected failure plainly rather than crashing the worker
+        return None, f"no captions available (unexpected {type(exc).__name__}: {str(exc)[:200]})"
 
 
 def try_whisper_fallback(video_id: str, model: str) -> tuple[str | None, str]:

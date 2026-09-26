@@ -1,5 +1,5 @@
 ---
-description: Adversarially critique Concept/Protocol notes to find weak claims, single-source assumptions, missing mechanisms, and unresolved contradictions - a "bulletproofing" pass. Verifies critical claims via /research, walks each study's citation network via the free OpenAlex API (strongest-alternative, superseding, and retraction checks - the scripted replacement for a manual Litmaps lookup), and gauges online sentiment via last30days. Different from /obsidian-challenge (which red-teams a proposed idea against your own past decisions) - this systematically critiques the concepts themselves.
+description: Adversarially critique Concept/Protocol notes to find weak claims, single-source assumptions, missing mechanisms, and unresolved contradictions - a "bulletproofing" pass. Verifies critical claims via /research, reads the real PubMed abstract for any claim with a PMID (E-utilities, not just OpenAlex's reconstructed abstract text), walks each study's citation network via the free OpenAlex API (strongest-alternative, superseding, and retraction checks - the scripted replacement for a manual Litmaps lookup), and gauges online sentiment via last30days. Different from /obsidian-challenge (which red-teams a proposed idea against your own past decisions) - this systematically critiques the concepts themselves.
 category: research
 ---
 
@@ -30,9 +30,24 @@ For every CRITICAL-severity finding from step 2 (and any claim the evidence audi
 ```
 /research "<the specific claim>" --academic
 ```
-This restricts to scholarly sources (arXiv, Semantic Scholar, OpenAlex, CrossRef) - we want actual studies, not blog summaries of studies. For each study that comes back relevant:
-- **What it actually found** - the real result, not the abstract's spin.
+This restricts to scholarly sources (arXiv, Semantic Scholar, OpenAlex, CrossRef) - we want actual studies, not blog summaries of studies.
+
+**Once a candidate study has a PMID (from `/research`'s own results, a citing note, or a claim relayed from a person/source), pull its real abstract directly from PubMed via E-utilities rather than trusting OpenAlex's reconstructed abstract alone (real, demonstrated gap - see below):**
+```
+GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=<PMID>&rettype=abstract&retmode=text
+```
+No key needed for this vault's per-study lookup volume. **Why this matters, not just belt-and-suspenders**: OpenAlex's abstracts are algorithmically reconstructed from an inverted-word-index format and can drop precision - confirmed 2026-09-02 on a real claim (Enes et al. 2024, PMID 37796222, the "52 sets/week, no MRV found" hypertrophy claim): OpenAlex's summary omitted the paper's own stated non-significant p-values (0.067-0.076) and its explicit "results appearing to plateau" CI-inspection language, both of which materially changed the claim's actual verdict from "confirmed" to "the underlying study doesn't fully support how it was relayed." **Use OpenAlex for what it's actually good at (citation-graph walking, step 4.5 below) and PubMed's own E-utilities for the abstract text itself** - don't rely on OpenAlex's abstract field alone for a claim being treated as load-bearing.
+
+If a PMID isn't yet known, PubMed's own search endpoint can find one directly rather than guessing from a WebSearch result:
+```
+GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=<query>&retmode=json&retmax=5
+```
+Then `efetch` each candidate PMID from the result to read the real abstract before deciding which one actually matches the claim.
+
+For each study that comes back relevant:
+- **What it actually found** - the real result (from the PubMed-sourced abstract, not the abstract's spin, and not a relayed secondhand summary of it).
 - **Sample** - size, population (human/animal, age range, trained/untrained, etc.) - flag any mismatch with how the vault's claim generalizes it.
+- **Statistical significance, stated exactly** - if the abstract gives p-values/CIs, quote them; "found an effect" and "found a statistically significant effect" are not the same claim, and conflating them is exactly the failure mode the 2026-09-02 example above caught.
 - **Methodology shortcomings** - underpowered sample, no control group, self-reported outcomes, short duration, industry funding, non-replication if known.
 - **Verdict**: does this study support, contradict, or only partially/conditionally support the vault's claim? Be specific about the condition.
 
@@ -41,7 +56,7 @@ Update the finding with a **Verified / Contradicted / Inconclusive** tag and cit
 **No-evidence findings are point-in-time, not permanent (added 2026-08-02):** if `/research --academic` turns up nothing relevant - or the only source for a claim is a podcast/YouTube/other non-academic source and no academic literature exists on it yet - do NOT record this as a settled "Unverified" or "no evidence exists" verdict. Tag it explicitly as **No evidence found (as of YYYY-MM-DD)** with today's date, and add it to the report's `## Flagged for re-research` list. This applies whether the claim originated from a podcast, a YouTube video, a book, or any other non-peer-reviewed source - the absence of academic backing today says nothing about whether it'll still be absent in a year, and treating "no evidence yet" as "no evidence, full stop" is exactly the kind of stale-claim risk `/obsidian-health` and re-runs of this command are meant to catch. A future `/concept-audit` re-run on the same note should re-check every `No evidence found (as of ...)` tag via `/research --academic` before touching anything new, since these are the claims most likely to have real literature appear later.
 
 ## 4.5. Citation-network check via OpenAlex (skip with --skip-verify, same flag as step 4)
-For every study pulled in step 4 that has a resolvable DOI, walk its citation graph via the free OpenAlex API (no key/account needed - this is what replaces a manual Litmaps lookup) rather than trusting the single paper in isolation:
+OpenAlex owns citation-graph walking (who cites this, is there a stronger/newer alternative, retraction status) - PubMed's E-utilities in step 4 above don't expose this, so both APIs are used for what they're each actually good at, not as redundant alternatives. For every study pulled in step 4 that has a resolvable DOI, walk its citation graph via the free OpenAlex API (no key/account needed - this is what replaces a manual Litmaps lookup) rather than trusting the single paper in isolation:
 
 ```
 GET https://api.openalex.org/works/doi:<the DOI>

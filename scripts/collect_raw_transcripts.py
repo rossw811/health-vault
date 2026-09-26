@@ -24,9 +24,11 @@ import concurrent.futures
 import contextlib
 import json
 import os
+import random
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -171,12 +173,149 @@ def channel_slug(url: str) -> str:
     return match.group(1).lstrip("@").replace("channel/", "").replace("user/", "").lower()
 
 
+# Real incident 2026-08-19: zero rate-limiting anywhere in this collector -
+# 3 parallel workers fired yt-dlp as fast as possible, tripping a YouTube-side
+# HTTP 429 storm that then made every subsequent request fail too (worsening,
+# not just failing to fix, the underlying block). Two real fixes:
+# (1) a small base jitter delay before every per-video yt-dlp call, so the
+#     combined request rate across all workers stays well under whatever
+#     threshold triggers 429 in the first place.
+# (2) a file-based circuit breaker shared across worker PROCESSES (they don't
+#     share memory - ProcessPoolExecutor - so a small state file is the
+#     simplest process-safe coordination mechanism for this coarse purpose;
+#     an occasional race during the write is harmless, worst case one extra
+#     request during the transition). The moment any worker sees a 429, every
+#     worker backs off for RATE_LIMIT_COOLDOWN_SECONDS instead of continuing
+#     to hammer the same wall on every remaining video in the batch.
+RATE_LIMIT_COOLDOWN_FILE = RAW_DIR / ".rate_limit_until"
+RATE_LIMIT_COOLDOWN_SECONDS = 900  # 15 min - short enough to resume quickly once the block clears, long enough to actually stop hammering
+BASE_REQUEST_DELAY_RANGE = (0.7, 1.8)  # per-video jitter, applied before every yt-dlp subprocess call
+RATE_LIMIT_MARKERS = ("429", "Too Many Requests",
+    # Real incident 2026-08-20: a burst of ~484 consecutive failures on this
+    # exact error text stalled the collector over an hour with zero throughput -
+    # the marker list only covered 429/IpBlocked, so this anti-bot variant never
+    # triggered the cooldown/backoff logic and workers sat idle re-hitting the
+    # same wall silently instead of backing off.
+    "Sign in to confirm",
+    # Real incident 2026-08-20, same session: a third distinct error text seen
+    # in the wild after the restart above - also explicitly self-identifies as
+    # a YouTube-side rate limit, so it belongs in this list on the same basis.
+    "rate-limited by YouTube")
+
+# Real fix 2026-08-19: same cookie-authentication fix as fetch_transcript_auto.py
+# and whisper_transcribe.py - see that comment for the full incident writeup.
+COOKIES_FILE = VAULT_ROOT / ".youtube_cookies.txt"
+
+
+def _cookie_flag() -> list[str]:
+    return ["--cookies", str(COOKIES_FILE)] if COOKIES_FILE.exists() else []
+
+
+def _is_rate_limit_error(text: str) -> bool:
+    return any(marker in text for marker in RATE_LIMIT_MARKERS)
+
+
+def _seconds_until_cooldown_clears() -> float:
+    try:
+        until = float(RATE_LIMIT_COOLDOWN_FILE.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        # ValueError also covers a corrupted/partially-written file (real
+        # incident 2026-08-19: concurrent non-atomic writes from multiple
+        # worker processes interleaved into a garbled value) - treat as no
+        # active cooldown rather than crashing, since _trigger_rate_limit_
+        # cooldown() below is now atomic and will self-heal on the next write.
+        return 0.0
+    return max(0.0, until - time.time())
+
+
+def _trigger_rate_limit_cooldown() -> None:
+    """Atomic write-then-rename (matches this vault's existing pattern, e.g.
+    write_json_atomic elsewhere in this codebase) - real incident 2026-08-19:
+    3 parallel worker PROCESSES can call this concurrently on a 429, and a
+    plain write_text() from multiple processes at once is not guaranteed
+    atomic, producing a garbled file (two timestamps literally concatenated
+    together) that then failed float() parsing and silently disabled the
+    circuit breaker at the exact moment it was needed. os.replace() is
+    atomic at the OS level - whichever worker's temp file lands last simply
+    wins cleanly, never an interleaved/corrupted result."""
+    import os
+    RATE_LIMIT_COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = RATE_LIMIT_COOLDOWN_FILE.with_suffix(RATE_LIMIT_COOLDOWN_FILE.suffix + f".tmp{os.getpid()}")
+    tmp.write_text(str(time.time() + RATE_LIMIT_COOLDOWN_SECONDS), encoding="utf-8")
+    os.replace(tmp, RATE_LIMIT_COOLDOWN_FILE)
+
+
+# Real root-cause finding 2026-08-19: the CachyOS migration didn't change
+# per-attempt pacing at all (the 15s between-pass delay in
+# run-youtube-queue-loop.ps1 / the systemd equivalent is identical to the old
+# Windows wrapper) - what changed is throughput per attempt. GPU whisper.cpp
+# here is ~22.5x faster than the old Windows CPU build (see buglog.md
+# 2026-08-15), and systemd's Restart=always keeps this loop running far more
+# reliably than Windows Task Scheduler ever did (documented history of
+# orphaned processes/stacked instances there). Net effect: dramatically more
+# real requests reach YouTube per hour than Windows ever produced, even
+# though nothing about the REQUEST PATTERN itself changed - only reactive
+# (after-the-fact) rate limiting existed before this, nothing capped the
+# collector's own maximum request rate proactively. A file-based shared
+# token bucket (same coordination mechanism as the circuit-breaker cooldown
+# file, since these are separate OS processes) caps combined throughput
+# across all 3 workers regardless of how fast the hardware can go.
+REQUEST_BUDGET_FILE = VAULT_ROOT / ".youtube_request_budget"
+MAX_REQUESTS_PER_WINDOW = 20  # conservative - deliberately well under any plausible YouTube threshold
+BUDGET_WINDOW_SECONDS = 60
+
+
+def _consume_rate_budget_token() -> None:
+    """Blocks until a token is available in the current time window. Reads-
+    modifies-writes the shared budget file; an occasional lost update under
+    concurrent access just means a worker waits one extra loop iteration
+    (self-correcting, not a correctness issue for this coarse purpose)."""
+    import os
+    while True:
+        now = time.time()
+        window_start = int(now // BUDGET_WINDOW_SECONDS) * BUDGET_WINDOW_SECONDS
+        try:
+            raw = REQUEST_BUDGET_FILE.read_text(encoding="utf-8").strip()
+            saved_window, count = raw.split(",")
+            saved_window = float(saved_window)
+            count = int(count)
+        except (FileNotFoundError, ValueError):
+            saved_window, count = window_start, 0
+
+        if saved_window < window_start:
+            saved_window, count = window_start, 0
+
+        if count < MAX_REQUESTS_PER_WINDOW:
+            REQUEST_BUDGET_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = REQUEST_BUDGET_FILE.with_suffix(REQUEST_BUDGET_FILE.suffix + f".tmp{os.getpid()}")
+            tmp.write_text(f"{saved_window},{count + 1}", encoding="utf-8")
+            os.replace(tmp, REQUEST_BUDGET_FILE)
+            return
+
+        # Budget exhausted for this window - sleep until the next window opens
+        time.sleep(max(1.0, (saved_window + BUDGET_WINDOW_SECONDS) - now))
+
+
+def _wait_for_rate_limit_and_jitter() -> None:
+    """Called before every per-video yt-dlp subprocess call. Blocks the
+    calling worker until any active circuit-breaker cooldown clears, THEN
+    consumes a proactive rate-budget token (caps sustained throughput
+    regardless of hardware speed), then applies the small baseline jitter."""
+    remaining = _seconds_until_cooldown_clears()
+    if remaining > 0:
+        time.sleep(remaining)
+    _consume_rate_budget_token()
+    time.sleep(random.uniform(*BASE_REQUEST_DELAY_RANGE))
+
+
 def list_channel_video_ids(channel_url: str) -> list[str]:
     videos_url = channel_url.rstrip("/") + "/videos"
     result = subprocess.run(
-        ["yt-dlp", "--flat-playlist", "--print", "%(id)s", videos_url],
+        ["yt-dlp", *_cookie_flag(), "--flat-playlist", "--print", "%(id)s", videos_url],
         capture_output=True, text=True,
     )
+    if _is_rate_limit_error(result.stderr):
+        _trigger_rate_limit_cooldown()
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -186,13 +325,16 @@ def extract_video_id(url: str) -> str | None:
 
 
 def fetch_metadata(video_id: str) -> dict:
+    _wait_for_rate_limit_and_jitter()
     result = subprocess.run(
-        ["yt-dlp", "--skip-download",
+        ["yt-dlp", *_cookie_flag(), "--skip-download",
          "--print", "title", "--print", "channel", "--print", "upload_date",
          "--print", "duration_string", "--print", "view_count", "--print", "like_count",
          f"https://www.youtube.com/watch?v={video_id}"],
         capture_output=True, text=True,
     )
+    if _is_rate_limit_error(result.stderr):
+        _trigger_rate_limit_cooldown()
     lines = result.stdout.splitlines()
     keys = ["title", "channel", "upload_date", "duration", "view_count", "like_count"]
     padded = lines + [""] * (len(keys) - len(lines))

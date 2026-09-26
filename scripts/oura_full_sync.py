@@ -52,6 +52,7 @@ VAULT_ROOT = Path(__file__).resolve().parent.parent
 DAILY_DIR = VAULT_ROOT / "Daily"
 RAW_DIR = DAILY_DIR / ".oura-raw"
 ENV_PATH = VAULT_ROOT / ".env"
+PROTOCOLS_DIR = VAULT_ROOT / "Protocols"
 BASE = "https://api.ouraring.com/v2/usercollection"
 
 # Endpoints keyed by a "day" field, one record per day (safe to index_by_day).
@@ -503,7 +504,106 @@ tags: [biometrics, health-tracking]
 """
 
 
-def upsert_daily_note(day_str, updates, stress_by_day, spo2_by_day):
+FM_FIELD_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
+
+
+def _parse_simple_frontmatter(text):
+    """Best-effort flat key: value parse of a note's frontmatter block.
+    Not a real YAML parser (matches the rest of this script's regex-based
+    frontmatter handling) - good enough for the scalar status/date fields
+    Protocols/*.md actually uses.
+    """
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+    if not m:
+        return {}
+    out = {}
+    for line in m.group(1).splitlines():
+        fm = FM_FIELD_RE.match(line)
+        if fm:
+            out[fm.group(1)] = fm.group(2).strip()
+    return out
+
+
+def load_active_protocol_defs():
+    """Scan Protocols/*.md for status: active and return a list of
+    {title, start_date, end_date} dicts. title is the filename stem (matches
+    what oura-sync.md's step 2.5 calls "the note titles of every Protocol").
+    A note with no start_date/end_date has both as None ("no bounds given").
+    """
+    defs = []
+    if not PROTOCOLS_DIR.exists():
+        return defs
+    for path in sorted(PROTOCOLS_DIR.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm = _parse_simple_frontmatter(text)
+        if fm.get("status") != "active":
+            continue
+        start_date = fm.get("start_date") or None
+        end_date = fm.get("end_date") or None
+        # TBD / cannot-determine style placeholders mean "no real bound".
+        if start_date and not re.match(r"^\d{4}-\d{2}-\d{2}$", start_date):
+            start_date = None
+        if end_date and not re.match(r"^\d{4}-\d{2}-\d{2}$", end_date):
+            end_date = None
+        defs.append({"title": path.stem, "start_date": start_date, "end_date": end_date})
+    return defs
+
+
+def compute_active_protocols_for_day(day_str, protocol_defs, is_backfill):
+    """Per oura-sync.md step 2.5:
+    - Non-backfill runs (today/yesterday's daily sync, explicit --date /
+      --start/--end used for the routine near-present pull): a protocol with
+      no start_date/end_date bound is assumed active ("no bounds given =
+      assume active"); one with bounds is included only if day_str falls
+      inside them.
+    - --backfill runs (retroactive history): only include a protocol if it
+      has an explicit start_date (end_date optional) covering day_str -
+      there's no honest way to guess retroactively for an unbounded note.
+    """
+    active = []
+    for p in protocol_defs:
+        start, end = p["start_date"], p["end_date"]
+        if is_backfill:
+            if not start:
+                continue
+            if day_str < start:
+                continue
+            if end and day_str > end:
+                continue
+            active.append(p["title"])
+        else:
+            if start and day_str < start:
+                continue
+            if end and day_str > end:
+                continue
+            active.append(p["title"])
+    return active
+
+
+def merge_active_protocols(existing_value, auto_titles):
+    """Union auto-detected protocol titles with any manual entries already
+    present in the note's active_protocols field, preserving manual entries
+    that don't correspond to a known active Protocol note (e.g. ad-hoc
+    compound-adherence tags like "DSIP" per oura-sync.md step 2.5).
+    """
+    manual = []
+    if existing_value:
+        try:
+            parsed = json.loads(existing_value)
+            if isinstance(parsed, list):
+                auto_set = set(auto_titles)
+                manual = [v for v in parsed if isinstance(v, str) and v not in auto_set]
+        except (json.JSONDecodeError, TypeError):
+            manual = []
+    merged = list(dict.fromkeys(list(auto_titles) + manual))
+    return json.dumps(merged)
+
+
+def upsert_daily_note(day_str, updates, stress_by_day, spo2_by_day,
+                       protocol_defs=None, is_backfill=False):
     path = DAILY_DIR / f"{day_str}.md"
     stress = stress_by_day.get(day_str)
     if stress:
@@ -525,6 +625,17 @@ def upsert_daily_note(day_str, updates, stress_by_day, spo2_by_day):
 
     changed = []
     fm_block = m.group(1)
+
+    # Step 2.5 of oura-sync.md: auto-populate active_protocols from
+    # Protocols/*.md status: active, unioned with any manual entries already
+    # present (e.g. ad-hoc compound-adherence tags). This REPLACES the
+    # field's auto-detected portion each run per that doc.
+    if protocol_defs is not None:
+        auto_titles = compute_active_protocols_for_day(day_str, protocol_defs, is_backfill)
+        existing_match = re.search(r"^active_protocols:\s*(.*)$", fm_block, re.MULTILINE)
+        existing_value = existing_match.group(1).strip() if existing_match else None
+        if auto_titles or existing_value not in (None, "", "[]"):
+            updates["active_protocols"] = merge_active_protocols(existing_value, auto_titles)
     for field, value in updates.items():
         if value is None:
             continue
@@ -601,8 +712,16 @@ def main():
         all_days.append(d.isoformat())
         d += timedelta(days=1)
 
+    protocol_defs = load_active_protocol_defs()
+    if protocol_defs:
+        print(f"Active protocols found: {', '.join(p['title'] for p in protocol_defs)}")
+    else:
+        print("No Protocols/*.md notes currently have status: active.")
+
     print(f"Days to process: {len(all_days)}")
     days_with_data = 0
+    protocol_days_tagged = 0
+    protocol_days_undetermined = 0
     for day_str in all_days:
         write_raw_json(
             day_str, data, sleep_by_day, activity_by_day, resilience_by_day,
@@ -616,12 +735,23 @@ def main():
             workouts_by_day, sessions_by_day, enhanced_tags_by_start_day,
             sleep_periods_by_day,
         )
-        changed = upsert_daily_note(day_str, updates, stress_by_day, spo2_by_day)
+        changed = upsert_daily_note(
+            day_str, updates, stress_by_day, spo2_by_day,
+            protocol_defs=protocol_defs, is_backfill=args.backfill,
+        )
         if changed:
             days_with_data += 1
             print(f"  {day_str}: updated {len(changed)} field(s)")
+        if "active_protocols" in changed:
+            protocol_days_tagged += 1
+        elif args.backfill:
+            protocol_days_undetermined += 1
 
     print(f"\nDone. {days_with_data}/{len(all_days)} days had at least one field updated.")
+    if args.backfill:
+        print(f"active_protocols: {protocol_days_tagged} day(s) tagged from explicit "
+              f"Protocol start_date/end_date bounds, {protocol_days_undetermined} left "
+              f"undetermined (no explicit bounds to backfill against honestly).")
     print(f"Raw JSON stored under {RAW_DIR}")
 
 

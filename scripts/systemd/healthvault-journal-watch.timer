@@ -1,0 +1,10 @@
+[Unit]
+Description=Run journal-watch discovery weekly (matches journal publication cadence, not YouTube's continuous-loop cadence)
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=7d
+Persistent=true
+
+[Install]
+WantedBy=timers.target

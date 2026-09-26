@@ -56,7 +56,19 @@ PAUSE_SECONDS = 15
 # 43GB/15.8GB free while both collector loops were already running.
 # --parallel 3 is a real, deliberate increase given that headroom - not the
 # collector's own bare default, and not left at the Windows-tuned 1.
-PARALLEL_WORKERS = 1 if not IS_LINUX else 3
+#
+# TEMPORARILY REDUCED TO 1 on 2026-08-20 during active freeze/MCE diagnosis -
+# this machine has had repeated full-system freezes (some correlating with a
+# corrected CPU Machine Check Exception, kernel-log-silent hangs in others)
+# every time under near-maximal simultaneous CPU+GPU load (Ollama + whisper-cpp
+# GPU inference + 3 collector workers, all racing to start heaviest work right
+# after boot). The RAM/VRAM headroom analysis above was sound but didn't
+# account for CPU-core/SIMD contention or thermal/electrical margin under
+# sustained multi-core AVX load, which is a different resource than memory
+# capacity. Reducing to 1 worker is a deliberate load-reduction diagnostic
+# step, not a permanent architecture decision - revert to 3 once the freeze
+# is confirmed fixed (or ruled unrelated to worker count).
+PARALLEL_WORKERS = 2
 
 
 def get_unchecked_count(queue_file: Path) -> int:

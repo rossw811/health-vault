@@ -13,6 +13,8 @@ If the person has no clear single institutional home (e.g. an independent practi
 ## 2. Scope the sweep
 An institution can have an enormous publication output — this is not "read everything MIT has ever published." Scope to: work from that specific institution's relevant department/lab/center (not the whole university) that is genuinely relevant to this vault's domain (health, fitness/athletic performance, mental health). Use `/research --academic` (or a direct WebSearch/Google Scholar-style query) scoped by institution + department + this vault's topic areas, not a generic "everything from Stanford" query.
 
+**Check the trusted-source list first.** Before searching from scratch, check `.claude/commands/references/trusted-journals.md` - a living, deduplicated list of every journal/source already cited in this vault, with rough citation counts and example topics. If this institution's output is likely to appear in a journal already listed there, check that journal directly (filtered to this institution's authors) before a broader open search. This is a discovery aid / prioritization only - never a restriction. **Add back to that list** any new real, legitimately-accessible journal/source this run turns up that isn't already on it.
+
 ## 3. Real, citable findings only
 Same anti-fabrication discipline as every other pass in this vault: every claim needs a real, checkable source (a specific paper, a lab's own publication page, a department press release) — not "Stanford is known for good neuroscience research" vague gesturing. If the institution-level sweep doesn't turn up anything beyond what the individual person's own note already covers, say so honestly rather than padding.
 

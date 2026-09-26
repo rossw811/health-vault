@@ -190,3 +190,69 @@ def find_matching_podcast_episode(
         if ratio >= title_threshold:
             return pod_title
     return None
+
+
+# --- Conservative, zero-meaning-risk filler stripping (2026-08-20) ---------
+# Ross-approved idea #2 from the 2026-08-20 assisted-draft-pipeline session:
+# a deterministic (no LLM) pre-processing pass that trims genuinely
+# zero-information text BEFORE a transcript reaches either the local Ollama
+# draft generator or Claude's own reading, so both save tokens on the same
+# pass. Deliberately narrow scope - only three patterns, each individually
+# incapable of altering meaning or removing something a future note might
+# need to quote:
+#   1. Exact-repeated whole-word stutters, 3+ consecutive occurrences only
+#      ("I I I think" -> "I think", "the the the plan" -> "the plan"). A
+#      2x repeat ("no no", "yes yes") is left untouched - that's frequently
+#      deliberate emphasis a quote might legitimately want to preserve, and
+#      only a genuine 3+ run is unambiguous transcription-artifact stutter.
+#   2. Standalone filler tokens ("um", "uh", "uhh", "uhm", "erm") matched as
+#      a whole word only - never a word merely containing one of these as a
+#      substring.
+#   3. An exact-duplicate consecutive sentence (verbatim repeat only, never
+#      a paraphrase or a partial repeat) - the second copy is dropped, the
+#      first is kept untouched.
+# This NEVER runs on or replaces the raw file on disk - raw transcripts stay
+# immutable per this vault's own rule. Callers write the *stripped* text to
+# a separate derived file/string; the original is always still there,
+# untouched, for anything that needs to fall back to it (e.g. the
+# anti-fabrication quote-verification gate, which always checks a candidate
+# quote against the real untouched transcript, never the stripped copy).
+
+_STUTTER_RE = re.compile(r"\b(\w+)(?:\s+\1\b){2,}", re.IGNORECASE)
+_FILLER_TOKEN_RE = re.compile(r"(?<!\w)(um+|uhh*|uhm+|erm+)(?!\w)[,]?\s*", re.IGNORECASE)
+
+
+def strip_filler_text(text: str) -> tuple[str, int]:
+    """Returns (stripped_text, chars_removed). Pure function, no I/O - callers
+    decide where the result gets written (never overwriting the original)."""
+    if not text:
+        return text, 0
+    original_len = len(text)
+    out = text
+
+    # 1. Exact whole-word stutters, 3+ consecutive repeats only.
+    out = _STUTTER_RE.sub(lambda m: m.group(1), out)
+
+    # 2. Standalone filler tokens ("um", "uh", "uhm", "erm").
+    out = _FILLER_TOKEN_RE.sub("", out)
+
+    # 3. Exact-duplicate consecutive sentences (verbatim only).
+    # Split while keeping the delimiter so rejoining doesn't lose punctuation.
+    parts = re.split(r"(?<=[.!?])\s+", out)
+    deduped = []
+    prev_norm = None
+    for sentence in parts:
+        norm = " ".join(sentence.split())
+        if norm and norm == prev_norm:
+            continue  # exact verbatim repeat of the immediately preceding sentence
+        deduped.append(sentence)
+        prev_norm = norm
+    out = " ".join(deduped)
+
+    # Cleanup: the two removals above can leave stray double-spaces or a
+    # dangling space before punctuation - fix those artifacts only, nothing
+    # that touches actual words.
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r" +([,.!?])", r"\1", out)
+
+    return out, original_len - len(out)

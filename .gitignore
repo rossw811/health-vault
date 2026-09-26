@@ -38,8 +38,18 @@ tmp_transcripts/
 __pycache__/
 
 # Obsidian — app config, installed plugin binaries, workspace layout.
-# Machine/vault-local, not generic tooling. Whole folder excluded.
-.obsidian/
+# Machine/vault-local, not generic tooling. Whole folder excluded, EXCEPT the
+# health-vault-rag plugin (added 2026-08-20) - that's real generic tooling we
+# wrote (same tier as scripts/, .claude/commands/), not vault-local config,
+# and it was sitting untracked by both git AND Syncthing (.stignore doesn't
+# allowlist .obsidian/ either) — a real gap where the only copy lived on one
+# machine's local disk with no backup at all. Tracked here instead of via
+# Syncthing since it's tooling, not vault content, matching this repo's own
+# git-owns-tooling/Syncthing-owns-content split.
+.obsidian/*
+!.obsidian/plugins/
+.obsidian/plugins/*
+!.obsidian/plugins/health-vault-rag/
 
 # Syncthing — machine-local sync metadata and conflict artifacts, added
 # 2026-08-15 (two-machine migration, see NEW-MACHINE-SETUP.md). .stignore
@@ -63,3 +73,26 @@ desktop.ini
 # Editor
 .vscode/
 *.swp
+
+# Exports — output of scripts/export_safe_copy.py, real vault content (a
+# sanitized copy of real notes), same tier as every other content folder.
+Exports/
+
+# Obsidian's own local app config - personal/machine-specific, not tooling
+.obsidian/
+
+# Scratch/temp/log artifacts from ad-hoc debugging sessions - never real
+# tooling, added 2026-09-26 per the standing "gitignore new top-level files
+# immediately" rule after several accumulated untracked
+.tmp_*
+tmp_*.txt
+*.tmp_work/
+.tmp_work/
+.tmp_vault_update/
+.tmp_vault_update2/
+err*.log
+ytdlp_err.log
+all_ids.txt
+ids.txt
+new_ids.txt
+.youtube_request_budget

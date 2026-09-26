@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 IS_LINUX = platform.system() == "Linux"
@@ -62,7 +63,44 @@ def find_ffmpeg_dir() -> str | None:
 SPONSORBLOCK_CATEGORIES = "sponsor,selfpromo,interaction"
 
 
+# Shares the same request-rate budget file as collect_raw_transcripts.py's
+# _consume_rate_budget_token() (real fix 2026-08-19 - see that file's comment
+# for the full incident writeup) - this is a genuinely separate process/file
+# but must count against the SAME combined YouTube-request budget, since
+# audio downloads and metadata/caption fetches all hit the same rate limit.
+_REQUEST_BUDGET_FILE = Path.home() / "Health" / ".youtube_request_budget"
+_MAX_REQUESTS_PER_WINDOW = 20
+_BUDGET_WINDOW_SECONDS = 60
+
+
+def _consume_rate_budget_token() -> None:
+    import os
+    while True:
+        now = time.time()
+        window_start = int(now // _BUDGET_WINDOW_SECONDS) * _BUDGET_WINDOW_SECONDS
+        try:
+            raw = _REQUEST_BUDGET_FILE.read_text(encoding="utf-8").strip()
+            saved_window, count = raw.split(",")
+            saved_window = float(saved_window)
+            count = int(count)
+        except (FileNotFoundError, ValueError):
+            saved_window, count = window_start, 0
+
+        if saved_window < window_start:
+            saved_window, count = window_start, 0
+
+        if count < _MAX_REQUESTS_PER_WINDOW:
+            _REQUEST_BUDGET_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = _REQUEST_BUDGET_FILE.with_suffix(_REQUEST_BUDGET_FILE.suffix + f".tmp{os.getpid()}")
+            tmp.write_text(f"{saved_window},{count + 1}", encoding="utf-8")
+            os.replace(tmp, _REQUEST_BUDGET_FILE)
+            return
+
+        time.sleep(max(1.0, (saved_window + _BUDGET_WINDOW_SECONDS) - now))
+
+
 def download_audio(video_id_or_url: str, dest_dir: Path) -> Path:
+    _consume_rate_budget_token()
     url = video_id_or_url
     if not url.startswith("http"):
         url = f"https://www.youtube.com/watch?v={video_id_or_url}"
@@ -95,17 +133,51 @@ def download_audio(video_id_or_url: str, dest_dir: Path) -> Path:
         "--remote-components", "ejs:github",
         "-o", out_template,
     ]
+    # Real fix 2026-08-19: authenticated (cookie-bearing) requests are far
+    # less rate-limit-prone than anonymous ones - see fetch_transcript_auto.py's
+    # COOKIES_FILE comment for the full incident writeup. Same file, Netscape
+    # format, --cookies is yt-dlp's own native flag for this (not a workaround).
+    cookies_file = Path.home() / "Health" / ".youtube_cookies.txt"
+    if cookies_file.exists():
+        cmd += ["--cookies", str(cookies_file)]
     ffmpeg_dir = find_ffmpeg_dir()
     if ffmpeg_dir is None:
         raise RuntimeError("ffmpeg not found on PATH or in winget install location - install it or check the winget path")
     cmd += ["--ffmpeg-location", ffmpeg_dir, url]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-    )
+
+    # Real finding 2026-09-09: "Sign in to confirm you're not a bot" is often a
+    # TRANSIENT JS-challenge-solve failure, not a persistent block - manually
+    # confirmed a specific video fail with this exact error, then succeed on an
+    # immediate identical retry seconds later, no cookie/config change in
+    # between. The collector's own cross-run backoff (RETRY_BACKOFF_DAYS, up to
+    # 30 days in collector_common.py) is far too slow for a failure mode that
+    # often clears within seconds - this short in-process retry catches most of
+    # those before they ever reach that day-scale backoff at all. Bounded to 3
+    # attempts total and only triggers on this specific error signature, so it
+    # doesn't turn a genuinely-blocked video into a long hang, and doesn't
+    # interfere with the existing 429/rate-limit handling below.
+    bot_check_marker = "Sign in to confirm you"
+    max_bot_check_attempts = 3
+    result = None
+    for attempt in range(1, max_bot_check_attempts + 1):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            break
+        stderr_check = result.stderr.strip()
+        if bot_check_marker not in stderr_check or attempt == max_bot_check_attempts:
+            break
+        time.sleep(10)
+
     if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp audio download failed: {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        if "429" in stderr or "Too Many Requests" in stderr:
+            # Signal upstream (collect_raw_transcripts.py) via a recognizable
+            # marker in the exception text - _process_one_video's existing
+            # try/except already reports this string as the failure reason,
+            # so it becomes visible to is_rate_limit_failure() in
+            # collector_common.py without needing a new exception type.
+            raise RuntimeError(f"yt-dlp audio download failed (429 Too Many Requests): {stderr}")
+        raise RuntimeError(f"yt-dlp audio download failed: {stderr}")
 
     audio_files = list(dest_dir.glob("audio.*"))
     if not audio_files:

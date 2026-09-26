@@ -1,0 +1,7 @@
+[Unit]
+Description=Health Vault journal-watch discovery (zero-Claude-cost PubMed check, known-journal + niche/MeSH arms)
+
+[Service]
+Type=oneshot
+ExecStart=%h/Health/.venv/bin/python %h/Health/scripts/journal_watch.py
+WorkingDirectory=%h/Health

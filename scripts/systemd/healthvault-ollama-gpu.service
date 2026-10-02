@@ -1,0 +1,24 @@
+[Unit]
+Description=Health Vault user-level Ollama on the GPU (port 11435)
+# Why this exists (2026-10-01): the system ollama.service sometimes starts before
+# the NVIDIA driver is ready, logs "llama-server GPU discovery watchdog timed out",
+# and silently runs CPU-only until restarted (see buglog.md 2026-09-25 and
+# development.md 2026-09-30). Fixing that unit needs sudo; this user unit doesn't.
+# With linger enabled it starts at boot, waits for nvidia-smi, and serves the
+# same model store read-only. Pulls still go through the system service (11434),
+# which owns /var/lib/ollama.
+
+[Service]
+Environment=OLLAMA_HOST=127.0.0.1:11435
+Environment=OLLAMA_MODELS=/var/lib/ollama
+ExecStartPre=/bin/sh -c 'until nvidia-smi >/dev/null 2>&1; do sleep 2; done; sleep 5'
+ExecStart=/usr/bin/ollama serve
+# Fails the start if Ollama came up CPU-only (boot-time discovery timeout), so
+# Restart=on-failure retries it - see scripts/ollama_gpu_check.sh.
+ExecStartPost=/bin/bash %h/Health/scripts/ollama_gpu_check.sh
+TimeoutStartSec=300
+Restart=on-failure
+RestartSec=20
+
+[Install]
+WantedBy=default.target

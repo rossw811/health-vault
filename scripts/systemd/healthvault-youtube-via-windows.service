@@ -1,0 +1,17 @@
+[Unit]
+Description=Health Vault YouTube collector via the Windows laptop's Tailscale exit node (paced, watchdog-guarded)
+# Replaces healthvault-youtube-loop.service while CachyOS's own public IP is
+# bot-flagged by YouTube (2026-10-01) - see scripts/youtube_via_exit_node.py.
+
+[Service]
+WorkingDirectory=%h/Health
+# Set YT_EXIT_NODE (the exit-node machine's Tailscale IP) in %h/Health/.env
+EnvironmentFile=-%h/Health/.env
+ExecStart=%h/Health/.venv/bin/python %h/Health/scripts/youtube_via_exit_node.py
+# Always leave CachyOS on a direct connection if this service stops for any reason.
+ExecStopPost=/usr/bin/tailscale set --exit-node=
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=default.target

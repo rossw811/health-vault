@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -87,7 +88,9 @@ PRIORITY_CHANNELS = (
     "Peter Attia", "Renaissance Periodization", "Bryan Johnson",
 )
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+# OLLAMA_HOST (set by the systemd units) points at the boot-safe GPU server
+# healthvault-ollama-gpu.service on :11435 - see that unit for why (2026-10-01).
+OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/") + "/api/generate"
 MODEL = "qwen2.5:14b"
 # Real context need: multi-hour Huberman/Attia episodes can run 30-40K+
 # tokens (see the migration plan's Phase 4 note). 16384 is a practical

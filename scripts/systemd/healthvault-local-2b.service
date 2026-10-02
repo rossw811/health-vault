@@ -1,0 +1,17 @@
+[Unit]
+Description=Health Vault local Part 2b production loop (triage + verified local note-finishing, zero Claude cost)
+Wants=healthvault-ollama-gpu.service
+After=healthvault-ollama-gpu.service
+
+[Service]
+WorkingDirectory=%h/Health
+# Fast profile validated 2026-10-01 (4 hard items, 1.3-2.4x faster, quality >= full).
+Environment=THINK_PROFILE=fast
+ExecStart=/bin/bash %h/Health/scripts/run_local_2b_loop.sh
+# Kill the whole process group on stop so no orphaned workers keep models loaded.
+KillMode=control-group
+Restart=on-failure
+RestartSec=120
+
+[Install]
+WantedBy=default.target

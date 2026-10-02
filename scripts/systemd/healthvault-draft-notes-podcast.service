@@ -1,7 +1,10 @@
 [Unit]
+Wants=healthvault-ollama-gpu.service
+After=healthvault-ollama-gpu.service
 Description=Health Vault local-LLM assisted-draft generation (podcast)
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/Health
+Environment=OLLAMA_HOST=http://127.0.0.1:11435
 ExecStart=%h/Health/.venv/bin/python %h/Health/scripts/generate_draft_notes.py podcast --batch-size 20
